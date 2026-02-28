@@ -40,6 +40,13 @@ class NodeType(str, Enum):
     CNN_MODEL         = "cnn_model"
     RNN_MODEL         = "rnn_model"      # RNN / LSTM / GRU
 
+    # ── Extended model nodes ───────────────────────────────────────────────
+    OBJECT_DETECT_MODEL = "object_detect_model"   # YOLO / DETR object detection
+    AUDIO_MODEL         = "audio_model"           # Whisper / Wav2Vec2 audio tasks
+    AUDIO_CNN           = "audio_cnn"             # CNN on log-mel spectrograms
+    IMAGE_CAE           = "image_cae"             # Convolutional AutoEncoder
+    TABULAR_MODEL       = "tabular_model"         # FFNN / DNN for tabular data
+
     # ── Output nodes ──────────────────────────────────────────────────────────
     MODEL_SAVE        = "model_save"
     INFER_OUTPUT      = "infer_output"
@@ -194,6 +201,96 @@ NODE_CATALOGUE: dict[str, dict[str, Any]] = {
             "batch_size":     {"type": "integer", "description": "Batch size.", "default": 64},
             "learning_rate":  {"type": "number",  "description": "Learning rate.", "default": 1e-3},
             "gpu":            {"type": "string",  "description": "GPU type.", "default": "T4"},
+        },
+    },
+    NodeType.OBJECT_DETECT_MODEL: {
+        "label": "Object Detection Model",
+        "category": "model",
+        "description": "Fine-tune YOLO / DETR for bounding-box object detection.",
+        "accepts_files": False,
+        "output_type": "model",
+        "params": {
+            "base_model":    {"type": "string",  "description": "Pretrained detector (yolos-tiny|rtdetr-r18vd|detr-resnet-50).", "default": "yolos-tiny"},
+            "output_name":   {"type": "string",  "description": "Name for the saved model.", "default": "my-detector"},
+            "num_classes":   {"type": "integer", "description": "Number of object classes.", "default": 80},
+            "input_format":  {"type": "string",  "description": "Annotation format: coco|yolo|pascal|csv.", "default": "coco"},
+            "epochs":        {"type": "integer", "description": "Training epochs.", "default": 10},
+            "batch_size":    {"type": "integer", "description": "Batch size.", "default": 8},
+            "learning_rate": {"type": "number",  "description": "Learning rate.", "default": 5e-5},
+            "gpu":           {"type": "string",  "description": "GPU type.", "default": "A10G"},
+        },
+    },
+    NodeType.AUDIO_MODEL: {
+        "label": "Audio Model",
+        "category": "model",
+        "description": "Fine-tune Whisper / Wav2Vec2 for STT, emotion, or classification.",
+        "accepts_files": False,
+        "output_type": "model",
+        "params": {
+            "base_model":    {"type": "string",  "description": "Pretrained audio model (whisper-tiny|wav2vec2-base|wav2vec2-emotion).", "default": "whisper-tiny"},
+            "output_name":   {"type": "string",  "description": "Name for the saved model.", "default": "my-audio-model"},
+            "task":          {"type": "string",  "description": "Task: transcription|summarization|emotion_recognition|classification.", "default": "transcription"},
+            "num_classes":   {"type": "integer", "description": "Number of classes (classification tasks).", "default": 2},
+            "epochs":        {"type": "integer", "description": "Training epochs.", "default": 5},
+            "batch_size":    {"type": "integer", "description": "Batch size.", "default": 16},
+            "learning_rate": {"type": "number",  "description": "Learning rate.", "default": 1e-4},
+            "gpu":           {"type": "string",  "description": "GPU type.", "default": "A10G"},
+        },
+    },
+    NodeType.AUDIO_CNN: {
+        "label": "Audio CNN",
+        "category": "model",
+        "description": "Train a CNN on log-mel spectrograms for audio classification.",
+        "accepts_files": False,
+        "output_type": "model",
+        "params": {
+            "output_name":   {"type": "string",  "description": "Name for the saved model.", "default": "my-audio-cnn"},
+            "num_classes":   {"type": "integer", "description": "Number of output classes.", "default": 2},
+            "num_layers":    {"type": "integer", "description": "Number of conv layers.", "default": 3},
+            "filters":       {"type": "string",  "description": "Comma-separated filter counts.", "default": "32,64,128"},
+            "kernel_size":   {"type": "integer", "description": "Convolution kernel size.", "default": 3},
+            "sample_rate":   {"type": "integer", "description": "Audio sample rate (Hz).", "default": 16000},
+            "n_mels":        {"type": "integer", "description": "Number of mel filter banks.", "default": 80},
+            "epochs":        {"type": "integer", "description": "Training epochs.", "default": 10},
+            "batch_size":    {"type": "integer", "description": "Batch size.", "default": 32},
+            "learning_rate": {"type": "number",  "description": "Learning rate.", "default": 1e-3},
+            "gpu":           {"type": "string",  "description": "GPU type.", "default": "T4"},
+        },
+    },
+    NodeType.IMAGE_CAE: {
+        "label": "Convolutional AutoEncoder",
+        "category": "model",
+        "description": "Train a convolutional autoencoder for unsupervised feature learning.",
+        "accepts_files": False,
+        "output_type": "model",
+        "params": {
+            "output_name":   {"type": "string",  "description": "Name for the saved model.", "default": "my-cae"},
+            "num_layers":    {"type": "integer", "description": "Number of encoder conv layers.", "default": 3},
+            "filters":       {"type": "string",  "description": "Comma-separated filter counts.", "default": "32,64,128"},
+            "latent_dim":    {"type": "integer", "description": "Latent bottleneck channels.", "default": 256},
+            "epochs":        {"type": "integer", "description": "Training epochs.", "default": 20},
+            "batch_size":    {"type": "integer", "description": "Batch size.", "default": 32},
+            "learning_rate": {"type": "number",  "description": "Learning rate.", "default": 1e-3},
+            "gpu":           {"type": "string",  "description": "GPU type.", "default": "A10G"},
+        },
+    },
+    NodeType.TABULAR_MODEL: {
+        "label": "Tabular Neural Network",
+        "category": "model",
+        "description": "Train FFNN / DNN / LSTM / GRU / RNN on tabular data.",
+        "accepts_files": False,
+        "output_type": "model",
+        "params": {
+            "model_type":    {"type": "string",  "description": "Architecture: ffnn|dnn|lstm|gru|rnn.", "default": "ffnn"},
+            "output_name":   {"type": "string",  "description": "Name for the saved model.", "default": "my-tabular-model"},
+            "target_column": {"type": "string",  "description": "Column name to predict.", "default": ""},
+            "num_layers":    {"type": "integer", "description": "Number of hidden layers.", "default": 3},
+            "hidden_dim":    {"type": "integer", "description": "Hidden units per layer.", "default": 128},
+            "num_epochs":    {"type": "integer", "description": "Training epochs.", "default": 20},
+            "batch_size":    {"type": "integer", "description": "Batch size.", "default": 64},
+            "learning_rate": {"type": "number",  "description": "Learning rate.", "default": 1e-3},
+            "bidirectional": {"type": "boolean", "description": "Bidirectional (RNN/LSTM/GRU only).", "default": False},
+            "gpu":           {"type": "string",  "description": "GPU type.", "default": "T4"},
         },
     },
     NodeType.MODEL_SAVE: {

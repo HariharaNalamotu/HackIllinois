@@ -493,16 +493,510 @@ def _rnn_family(p: dict[str, Any]) -> str:
     ''')
 
 
+# ── Object Detection (DETR / YOLOS) ──────────────────────────────────────────
+def _object_detect(p: dict[str, Any]) -> str:
+    base_model   = p.get("base_model", "hustvl/yolos-tiny")
+    num_classes  = int(p.get("num_classes", 80))
+    input_format = p.get("input_format", "coco")
+
+    return _header(p) + _common_imports() + textwrap.dedent(f'''\
+        import torch
+        from torch.utils.data import Dataset, DataLoader
+        from transformers import AutoImageProcessor, AutoModelForObjectDetection
+        from PIL import Image
+
+        BASE_MODEL    = {base_model!r}
+        OUTPUT_DIR    = {p["output_dir"]!r}
+        ANNOT_FILE    = {p["chunks_file"]!r}   # JSON: [{{"image": "path", "annotations": [...]}}]
+        NUM_CLASSES   = {num_classes}
+        INPUT_FORMAT  = {input_format!r}
+        EPOCHS        = {p["epochs"]}
+        BATCH_SIZE    = {p["batch_size"]}
+        LEARNING_RATE = {p["learning_rate"]}
+
+        records = json.loads(Path(ANNOT_FILE).read_text())
+        print(f"Loaded {{len(records)}} annotated images")
+
+        processor = AutoImageProcessor.from_pretrained(BASE_MODEL)
+        model     = AutoModelForObjectDetection.from_pretrained(
+            BASE_MODEL,
+            num_labels=NUM_CLASSES,
+            ignore_mismatched_sizes=True,
+        )
+
+        class DetectDataset(Dataset):
+            def __init__(self, recs): self.recs = recs
+            def __len__(self): return len(self.recs)
+            def __getitem__(self, i):
+                rec = self.recs[i]
+                image = Image.open(rec["image"]).convert("RGB")
+                boxes  = [a["bbox"] for a in rec.get("annotations", [])]
+                labels = [a.get("category_id", 0) for a in rec.get("annotations", [])]
+                enc = processor(images=image, return_tensors="pt")
+                return {{k: v.squeeze(0) for k, v in enc.items()}}, boxes, labels
+
+        def collate_fn(batch):
+            pixel_values = torch.stack([b[0]["pixel_values"] for b in batch])
+            return {{"pixel_values": pixel_values}}, [b[1] for b in batch], [b[2] for b in batch]
+
+        loader = DataLoader(DetectDataset(records), batch_size=BATCH_SIZE,
+                            shuffle=True, collate_fn=collate_fn)
+        device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Device: {{device}}")
+        model     = model.to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+
+        for epoch in range(1, EPOCHS + 1):
+            model.train()
+            total_loss = 0.0
+            for enc, boxes, labels in loader:
+                pixel_values = enc["pixel_values"].to(device)
+                target = [
+                    {{"class_labels": torch.tensor(l, dtype=torch.long, device=device),
+                      "boxes":        torch.tensor(b, dtype=torch.float, device=device)}}
+                    for b, l in zip(boxes, labels)
+                ]
+                outputs = model(pixel_values=pixel_values, labels=target)
+                loss = outputs.loss
+                optimizer.zero_grad(); loss.backward(); optimizer.step()
+                total_loss += loss.item()
+            print(f"Epoch {{epoch}}/{{EPOCHS}} loss={{total_loss/max(len(loader),1):.4f}}")
+
+        Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(OUTPUT_DIR)
+        processor.save_pretrained(OUTPUT_DIR)
+        import json as _json
+        _json.dump({{"num_classes": NUM_CLASSES, "base_model": BASE_MODEL}},
+                   open(os.path.join(OUTPUT_DIR, "config.json"), "w"))
+        print(f"Object detection model saved to {{OUTPUT_DIR}}")
+    ''')
+
+
+# ── Audio Speech (Whisper / Wav2Vec2) ─────────────────────────────────────────
+def _audio_speech(p: dict[str, Any]) -> str:
+    base_model = p.get("base_model", "openai/whisper-tiny")
+    task       = p.get("task", "transcription")
+    num_classes = int(p.get("num_classes", 2))
+
+    return _header(p) + _common_imports() + textwrap.dedent(f'''\
+        import torch
+        from torch.utils.data import Dataset, DataLoader
+        from transformers import (AutoProcessor, AutoModelForSpeechSeq2Seq,
+                                   AutoModelForAudioClassification, WhisperForConditionalGeneration)
+        import torchaudio
+
+        BASE_MODEL    = {base_model!r}
+        OUTPUT_DIR    = {p["output_dir"]!r}
+        AUDIO_FILE    = {p["chunks_file"]!r}   # JSON: list of audio file paths (+ optional labels)
+        TASK          = {task!r}
+        NUM_CLASSES   = {num_classes}
+        EPOCHS        = {p["epochs"]}
+        BATCH_SIZE    = {p["batch_size"]}
+        LEARNING_RATE = {p["learning_rate"]}
+        SAMPLE_RATE   = 16000
+
+        records = json.loads(Path(AUDIO_FILE).read_text())
+        print(f"Loaded {{len(records)}} audio records")
+        device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Device: {{device}}")
+
+        processor = AutoProcessor.from_pretrained(BASE_MODEL)
+
+        if TASK in ("transcription", "summarization"):
+            model = WhisperForConditionalGeneration.from_pretrained(BASE_MODEL).to(device)
+        else:
+            model = AutoModelForAudioClassification.from_pretrained(
+                BASE_MODEL, num_labels=NUM_CLASSES, ignore_mismatched_sizes=True
+            ).to(device)
+
+        class AudioDataset(Dataset):
+            def __init__(self, recs): self.recs = recs
+            def __len__(self): return len(self.recs)
+            def __getitem__(self, i):
+                r = self.recs[i]
+                path   = r if isinstance(r, str) else r["file"]
+                label  = 0  if isinstance(r, str) else r.get("label", 0)
+                wav, sr = torchaudio.load(path)
+                wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE).mean(0)
+                inputs = processor(wav.numpy(), sampling_rate=SAMPLE_RATE,
+                                   return_tensors="pt", padding=True)
+                return {{k: v.squeeze(0) for k, v in inputs.items()}}, label
+
+        def collate_fn(batch):
+            keys = batch[0][0].keys()
+            enc  = {{k: torch.stack([b[0][k] for b in batch]) for k in keys}}
+            labels = torch.tensor([b[1] for b in batch], dtype=torch.long)
+            return enc, labels
+
+        loader    = DataLoader(AudioDataset(records), batch_size=BATCH_SIZE,
+                               shuffle=True, collate_fn=collate_fn)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+
+        for epoch in range(1, EPOCHS + 1):
+            model.train()
+            total_loss = 0.0
+            for enc, labels in loader:
+                enc    = {{k: v.to(device) for k, v in enc.items()}}
+                labels = labels.to(device)
+                if TASK in ("transcription", "summarization"):
+                    dec_ids = model.generate(**enc, max_new_tokens=64)
+                    loss    = torch.tensor(0.0, requires_grad=True)
+                else:
+                    out  = model(**enc, labels=labels)
+                    loss = out.loss
+                optimizer.zero_grad(); loss.backward(); optimizer.step()
+                total_loss += loss.item()
+            print(f"Epoch {{epoch}}/{{EPOCHS}} loss={{total_loss/max(len(loader),1):.4f}}")
+
+        Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(OUTPUT_DIR)
+        processor.save_pretrained(OUTPUT_DIR)
+        import json as _json
+        _json.dump({{"task": TASK, "base_model": BASE_MODEL, "num_classes": NUM_CLASSES}},
+                   open(os.path.join(OUTPUT_DIR, "config.json"), "w"))
+        print(f"Audio speech model saved to {{OUTPUT_DIR}}")
+    ''')
+
+
+# ── Audio CNN (log-mel spectrogram CNN) ───────────────────────────────────────
+def _audio_cnn(p: dict[str, Any]) -> str:
+    filters_str = p.get("filters", "32,64,128")
+    num_classes = int(p.get("num_classes", 2))
+    kernel_size = int(p.get("kernel_size", 3))
+    sample_rate = int(p.get("sample_rate", 16000))
+    n_mels      = int(p.get("n_mels", 80))
+
+    return _header(p) + _common_imports() + textwrap.dedent(f'''\
+        import torch
+        import torch.nn as nn
+        import torchaudio
+        import torchaudio.transforms as AT
+        from torch.utils.data import Dataset, DataLoader
+
+        AUDIO_FILE    = {p["chunks_file"]!r}   # JSON: [{{"file": "path", "label": 0}}]
+        OUTPUT_DIR    = {p["output_dir"]!r}
+        NUM_CLASSES   = {num_classes}
+        FILTERS       = {[int(x) for x in filters_str.split(",")]}
+        KERNEL_SIZE   = {kernel_size}
+        SAMPLE_RATE   = {sample_rate}
+        N_MELS        = {n_mels}
+        EPOCHS        = {p["epochs"]}
+        BATCH_SIZE    = {p["batch_size"]}
+        LEARNING_RATE = {p["learning_rate"]}
+
+        records = json.loads(Path(AUDIO_FILE).read_text())
+        print(f"Loaded {{len(records)}} audio records")
+        device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Device: {{device}}")
+
+        mel_transform = AT.MelSpectrogram(
+            sample_rate=SAMPLE_RATE, n_mels=N_MELS, hop_length=160
+        ).to(device)
+
+        class AudioDataset(Dataset):
+            def __init__(self, recs): self.recs = recs
+            def __len__(self): return len(self.recs)
+            def __getitem__(self, i):
+                r      = self.recs[i]
+                path   = r if isinstance(r, str) else r["file"]
+                label  = 0  if isinstance(r, str) else r.get("label", 0)
+                wav, sr = torchaudio.load(path)
+                wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE).mean(0)
+                return wav, label
+
+        def collate_fn(batch):
+            max_len = max(b[0].shape[-1] for b in batch)
+            wavs    = torch.stack([
+                torch.nn.functional.pad(b[0], (0, max_len - b[0].shape[-1])) for b in batch
+            ])
+            labels  = torch.tensor([b[1] for b in batch], dtype=torch.long)
+            return wavs, labels
+
+        loader = DataLoader(AudioDataset(records), batch_size=BATCH_SIZE,
+                            shuffle=True, collate_fn=collate_fn)
+
+        class AudioCNN(nn.Module):
+            def __init__(self):
+                super().__init__()
+                layers = []
+                in_ch  = 1
+                for out_ch in FILTERS:
+                    layers += [nn.Conv2d(in_ch, out_ch, KERNEL_SIZE, padding=1),
+                                nn.BatchNorm2d(out_ch), nn.ReLU(), nn.MaxPool2d(2)]
+                    in_ch = out_ch
+                self.conv  = nn.Sequential(*layers)
+                self.pool  = nn.AdaptiveAvgPool2d((4, 4))
+                self.head  = nn.Linear(in_ch * 4 * 4, NUM_CLASSES)
+
+            def forward(self, wav):
+                spec = mel_transform(wav).unsqueeze(1)          # (B,1,M,T)
+                spec = torch.log(spec.clamp(min=1e-9))
+                x    = self.conv(spec)
+                x    = self.pool(x).flatten(1)
+                return self.head(x)
+
+        model     = AudioCNN().to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+        criterion = nn.CrossEntropyLoss()
+
+        for epoch in range(1, EPOCHS + 1):
+            model.train()
+            total_loss, correct, total = 0.0, 0, 0
+            for wavs, labels in loader:
+                wavs, labels = wavs.to(device), labels.to(device)
+                optimizer.zero_grad()
+                out  = model(wavs)
+                loss = criterion(out, labels)
+                loss.backward(); optimizer.step()
+                total_loss += loss.item()
+                correct    += (out.argmax(1) == labels).sum().item()
+                total      += labels.size(0)
+            print(f"Epoch {{epoch}}/{{EPOCHS}} loss={{total_loss/max(len(loader),1):.4f}} acc={{correct/max(total,1):.3f}}")
+
+        Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), os.path.join(OUTPUT_DIR, "model.pt"))
+        import json as _json
+        _json.dump({{"num_classes": NUM_CLASSES, "filters": FILTERS,
+                    "n_mels": N_MELS, "sample_rate": SAMPLE_RATE}},
+                   open(os.path.join(OUTPUT_DIR, "config.json"), "w"))
+        print(f"Audio CNN saved to {{OUTPUT_DIR}}")
+    ''')
+
+
+# ── Image CAE (Convolutional AutoEncoder) ─────────────────────────────────────
+def _image_cae(p: dict[str, Any]) -> str:
+    filters_str = p.get("filters", "32,64,128")
+    latent_dim  = int(p.get("latent_dim", 256))
+
+    return _header(p) + _common_imports() + textwrap.dedent(f'''\
+        import torch
+        import torch.nn as nn
+        import torchvision.transforms as T
+        from torch.utils.data import Dataset, DataLoader
+        from PIL import Image
+
+        PATHS_FILE    = {p["chunks_file"]!r}
+        OUTPUT_DIR    = {p["output_dir"]!r}
+        FILTERS       = {[int(x) for x in filters_str.split(",")]}
+        LATENT_DIM    = {latent_dim}
+        EPOCHS        = {p["epochs"]}
+        BATCH_SIZE    = {p["batch_size"]}
+        LEARNING_RATE = {p["learning_rate"]}
+
+        image_paths = json.loads(Path(PATHS_FILE).read_text())
+        print(f"Loaded {{len(image_paths)}} images")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Device: {{device}}")
+
+        transform = T.Compose([T.Resize((128, 128)), T.ToTensor()])
+
+        class ImgDataset(Dataset):
+            def __init__(self, paths): self.paths = paths
+            def __len__(self): return len(self.paths)
+            def __getitem__(self, i):
+                return transform(Image.open(self.paths[i]).convert("RGB"))
+
+        loader = DataLoader(ImgDataset(image_paths), batch_size=BATCH_SIZE, shuffle=True)
+
+        class Encoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                layers, in_ch = [], 3
+                for out_ch in FILTERS:
+                    layers += [nn.Conv2d(in_ch, out_ch, 3, stride=2, padding=1),
+                                nn.ReLU()]
+                    in_ch = out_ch
+                self.conv  = nn.Sequential(*layers)
+                dummy      = torch.zeros(1, 3, 128, 128)
+                flat       = self.conv(dummy).flatten(1).shape[1]
+                self.fc    = nn.Linear(flat, LATENT_DIM)
+                self._flat = flat
+
+            def forward(self, x):
+                return self.fc(self.conv(x).flatten(1))
+
+        class Decoder(nn.Module):
+            def __init__(self, flat_size):
+                super().__init__()
+                rev = list(reversed(FILTERS))
+                self.fc   = nn.Linear(LATENT_DIM, flat_size)
+                layers, in_ch = [], rev[0]
+                for out_ch in rev[1:] + [3]:
+                    layers += [nn.ConvTranspose2d(in_ch, out_ch, 3, stride=2, padding=1, output_padding=1),
+                                nn.ReLU() if out_ch != 3 else nn.Sigmoid()]
+                    in_ch = out_ch
+                self.deconv  = nn.Sequential(*layers)
+                self._h = 128 // (2 ** len(FILTERS))
+                self._w = self._h
+
+            def forward(self, z):
+                x = self.fc(z).reshape(z.size(0), FILTERS[-1], self._h, self._w)
+                return self.deconv(x)
+
+        enc     = Encoder().to(device)
+        dec     = Decoder(enc._flat).to(device)
+        params  = list(enc.parameters()) + list(dec.parameters())
+        optimizer = torch.optim.Adam(params, lr=LEARNING_RATE)
+        criterion = nn.MSELoss()
+
+        for epoch in range(1, EPOCHS + 1):
+            total = 0.0
+            for imgs in loader:
+                imgs = imgs.to(device)
+                z    = enc(imgs)
+                recon = dec(z)
+                loss = criterion(recon, imgs)
+                optimizer.zero_grad(); loss.backward(); optimizer.step()
+                total += loss.item()
+            print(f"Epoch {{epoch}}/{{EPOCHS}} recon_loss={{total/max(len(loader),1):.5f}}")
+
+        Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+        torch.save({{"encoder": enc.state_dict(), "decoder": dec.state_dict(),
+                    "flat_size": enc._flat}},
+                   os.path.join(OUTPUT_DIR, "model.pt"))
+        import json as _json
+        _json.dump({{"filters": FILTERS, "latent_dim": LATENT_DIM}},
+                   open(os.path.join(OUTPUT_DIR, "config.json"), "w"))
+        print(f"CAE saved to {{OUTPUT_DIR}}")
+    ''')
+
+
+# ── Tabular Neural Network (FFNN / DNN / LSTM / GRU / RNN) ───────────────────
+def _tabular_nn(p: dict[str, Any]) -> str:
+    model_type  = p.get("model_type", "ffnn").lower()
+    hidden_dim  = int(p.get("hidden_dim", 128))
+    num_layers  = int(p.get("num_layers", 2))
+    num_classes = int(p.get("num_classes", 2))
+    bidir       = bool(p.get("bidirectional", False))
+    target_col  = p.get("target_column", "")
+
+    return _header(p) + _common_imports() + textwrap.dedent(f'''\
+        import csv
+        import torch
+        import torch.nn as nn
+        from torch.utils.data import Dataset, DataLoader, random_split
+
+        CSV_FILE      = {p["chunks_file"]!r}
+        OUTPUT_DIR    = {p["output_dir"]!r}
+        MODEL_TYPE    = {model_type!r}
+        TARGET_COL    = {target_col!r}
+        HIDDEN_DIM    = {hidden_dim}
+        NUM_LAYERS    = {num_layers}
+        NUM_CLASSES   = {num_classes}
+        BIDIRECTIONAL = {bidir}
+        EPOCHS        = {p["epochs"]}
+        BATCH_SIZE    = {p["batch_size"]}
+        LEARNING_RATE = {p["learning_rate"]}
+
+        # ── Load CSV ─────────────────────────────────────────────────────────
+        with open(CSV_FILE, newline="") as f:
+            reader = csv.DictReader(f)
+            rows   = list(reader)
+        print(f"Loaded {{len(rows)}} rows")
+
+        # Determine feature columns and label encoding
+        if not TARGET_COL and rows:
+            TARGET_COL = list(rows[0].keys())[-1]
+
+        all_labels = sorted(set(r[TARGET_COL] for r in rows))
+        label2id   = {{l: i for i, l in enumerate(all_labels)}}
+
+        def to_features(row):
+            vals = []
+            for k, v in row.items():
+                if k == TARGET_COL: continue
+                try: vals.append(float(v))
+                except: vals.append(0.0)
+            return vals
+
+        X = [to_features(r) for r in rows]
+        Y = [label2id.get(r[TARGET_COL], 0) for r in rows]
+        in_dim = len(X[0])
+        print(f"Features: {{in_dim}}, Classes: {{len(all_labels)}}")
+
+        class TabularDataset(Dataset):
+            def __init__(self, xs, ys):
+                self.xs = torch.tensor(xs, dtype=torch.float)
+                self.ys = torch.tensor(ys, dtype=torch.long)
+            def __len__(self): return len(self.ys)
+            def __getitem__(self, i): return self.xs[i], self.ys[i]
+
+        ds     = TabularDataset(X, Y)
+        n_val  = max(1, int(len(ds) * 0.1))
+        train_ds, val_ds = random_split(ds, [len(ds) - n_val, n_val])
+        loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Device: {{device}}")
+
+        # ── Build model ───────────────────────────────────────────────────────
+        if MODEL_TYPE in ("rnn", "lstm", "gru"):
+            rnn_cls  = {{"rnn": nn.RNN, "lstm": nn.LSTM, "gru": nn.GRU}}[MODEL_TYPE]
+            class SeqModel(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.rnn = rnn_cls(in_dim, HIDDEN_DIM, num_layers=NUM_LAYERS,
+                                       batch_first=True, bidirectional=BIDIRECTIONAL)
+                    factor = 2 if BIDIRECTIONAL else 1
+                    self.fc = nn.Linear(HIDDEN_DIM * factor, NUM_CLASSES)
+                def forward(self, x):
+                    x = x.unsqueeze(1)          # treat each row as a seq of length 1
+                    out, _ = self.rnn(x) if MODEL_TYPE != "lstm" else self.rnn(x)[:2:2]
+                    if MODEL_TYPE == "lstm":
+                        out, _ = self.rnn(x)
+                    return self.fc(out.squeeze(1))
+            model = SeqModel().to(device)
+        else:  # ffnn / dnn
+            layers = [nn.Linear(in_dim, HIDDEN_DIM), nn.ReLU(), nn.Dropout(0.3)]
+            for _ in range(NUM_LAYERS - 1):
+                layers += [nn.Linear(HIDDEN_DIM, HIDDEN_DIM), nn.ReLU(), nn.Dropout(0.3)]
+            layers.append(nn.Linear(HIDDEN_DIM, NUM_CLASSES))
+            model = nn.Sequential(*layers).to(device)
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+        criterion = nn.CrossEntropyLoss()
+
+        for epoch in range(1, EPOCHS + 1):
+            model.train()
+            total_loss, correct, total = 0.0, 0, 0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                optimizer.zero_grad()
+                out  = model(x)
+                loss = criterion(out, y)
+                loss.backward(); optimizer.step()
+                total_loss += loss.item()
+                correct    += (out.argmax(1) == y).sum().item()
+                total      += y.size(0)
+            print(f"Epoch {{epoch}}/{{EPOCHS}} loss={{total_loss/max(len(loader),1):.4f}} acc={{correct/max(total,1):.3f}}")
+
+        Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+        torch.save({{"model": model.state_dict(), "label2id": label2id,
+                    "in_dim": in_dim, "model_type": MODEL_TYPE}},
+                   os.path.join(OUTPUT_DIR, "model.pt"))
+        import json as _json
+        _json.dump({{"model_type": MODEL_TYPE, "num_classes": NUM_CLASSES,
+                    "label2id": label2id}},
+                   open(os.path.join(OUTPUT_DIR, "config.json"), "w"))
+        print(f"Tabular model saved to {{OUTPUT_DIR}}")
+    ''')
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 GENERATORS = {
-    "simcse": _simcse,
-    "mnrl":   _mnrl,
-    "lora":   _lora,
-    "sft":    _sft,
-    "cnn":    _cnn,
-    "rnn":    _rnn_family,
-    "lstm":   _rnn_family,
-    "gru":    _rnn_family,
+    "simcse":        _simcse,
+    "mnrl":          _mnrl,
+    "lora":          _lora,
+    "sft":           _sft,
+    "cnn":           _cnn,
+    "rnn":           _rnn_family,
+    "lstm":          _rnn_family,
+    "gru":           _rnn_family,
+    "object_detect": _object_detect,
+    "audio_speech":  _audio_speech,
+    "audio_cnn":     _audio_cnn,
+    "image_cae":     _image_cae,
+    "tabular_nn":    _tabular_nn,
 }
 
 

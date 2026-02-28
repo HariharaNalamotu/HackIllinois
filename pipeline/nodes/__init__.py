@@ -23,6 +23,11 @@ from .model_nodes import (
     TextModelNode,
     CNNModelNode,
     RNNModelNode,
+    ObjectDetectModelNode,
+    AudioSpeechModelNode,
+    AudioCNNNode,
+    ImageCAENode,
+    TabularModelNode,
 )
 from .output_nodes import (
     ModelSaveNode,
@@ -42,9 +47,14 @@ _REGISTRY: dict[str, type[BaseNode]] = {
     NodeType.AUDIO_PREPROCESS:    AudioPreprocessNode,
     NodeType.TABULAR_PREPROCESS:  TabularPreprocessNode,
 
-    NodeType.TEXT_MODEL:          TextModelNode,
-    NodeType.CNN_MODEL:           CNNModelNode,
-    NodeType.RNN_MODEL:           RNNModelNode,
+    NodeType.TEXT_MODEL:            TextModelNode,
+    NodeType.CNN_MODEL:             CNNModelNode,
+    NodeType.RNN_MODEL:             RNNModelNode,
+    NodeType.OBJECT_DETECT_MODEL:   ObjectDetectModelNode,
+    NodeType.AUDIO_MODEL:           AudioSpeechModelNode,
+    NodeType.AUDIO_CNN:             AudioCNNNode,
+    NodeType.IMAGE_CAE:             ImageCAENode,
+    NodeType.TABULAR_MODEL:         TabularModelNode,
 
     NodeType.MODEL_SAVE:          ModelSaveNode,
     NodeType.INFER_OUTPUT:        InferOutputNode,

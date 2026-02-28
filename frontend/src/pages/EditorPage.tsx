@@ -11,14 +11,17 @@ import {
   SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, Play, Settings } from 'lucide-react';
+import { ArrowLeft, Play, Settings, Zap } from 'lucide-react';
 
-import { NodePalette } from '../components/NodePalette';
+import { NodePalette, WorkflowPaletteMode } from '../components/NodePalette';
 import { PropertiesPanel } from '../components/PropertiesPanel';
+import { TrainingModal } from '../components/TrainingModal';
 import { WorkflowNode } from '../components/WorkflowNode';
-import { useWorkflowStore, NodeType, InputNodeType } from '../store/workflowStore';
+import { useWorkflowStore, NodeType } from '../store/workflowStore';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { SettingsModal } from '../components/SettingsModal';
+import { buildPipelineSpec, collectFiles } from '../utils/pipelineBuilder';
+import { submitTrainingJob } from '../services/api';
 
 const nodeTypes = {
   workflowNode: WorkflowNode,
@@ -66,7 +69,7 @@ function WorkflowCanvas() {
   // Double-click on a node to delete it (but not the output node)
   const onNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
-      if (node.data?.type === 'output') return;
+      if (node.data?.type === 'saveModel') return;
       removeNode(node.id);
     },
     [removeNode]
@@ -122,20 +125,12 @@ function WorkflowCanvas() {
           nodeColor={(node) => {
             const type = node.data?.type;
             switch (type) {
-              case 'textRetrieval':
-                return '#00d4ff';
-              case 'agenticLLM':
-                return '#ff9500';
-              case 'visualData':
-                return '#a855f7';
-              case 'audioData':
-                return '#22c55e';
-              case 'voiceInput':
-                return '#f97316';
-              case 'output':
-                return '#ef4444';
-              default:
-                return '#ffd700';
+              case 'textInput':       return '#00d4ff';
+              case 'imageInput':      return '#a855f7';
+              case 'audioInput':      return '#22c55e';
+              case 'spreadsheetInput': return '#f97316';
+              case 'saveModel':       return '#ef4444';
+              default:                return '#ffd700';
             }
           }}
           maskColor="rgba(0, 0, 0, 0.8)"
@@ -148,36 +143,44 @@ function WorkflowCanvas() {
   );
 }
 
-function EditorHeader({ workflowName, workflowId }: { workflowName: string; workflowId: string }) {
+function EditorHeader({
+  workflowName,
+  workflowId,
+  workflowType,
+}: {
+  workflowName: string;
+  workflowId: string;
+  workflowType: 'training' | 'deployment';
+}) {
   const navigate = useNavigate();
   const nodes = useWorkflowStore((state) => state.nodes);
   const edges = useWorkflowStore((state) => state.edges);
   const getInputNodeTypes = useWorkflowStore((state) => state.getInputNodeTypes);
   const [showSettings, setShowSettings] = useState(false);
+  const [trainingJobId, setTrainingJobId] = useState<string | null>(null);
+  const [trainError, setTrainError] = useState<string | null>(null);
 
   const activeInputNodes = getInputNodeTypes();
 
-  // Training nodes: RLHF, RLAIF, hyperparamTuning
-  const trainingNodeTypes = ['rlhf', 'rlaif', 'hyperparamTuning'];
-  const hasTrainingNodes = nodes.some((n) => trainingNodeTypes.includes(n.data.type));
+  const processingNodeTypes = [
+    'chunkNode', 'embeddingModel',
+    'imageClassifier', 'imageCNN', 'imageCAE', 'objectDetector',
+    'audioSpeechModel', 'audioCNN', 'tabularModel',
+  ];
+  const hasProcessingNode = nodes.some((n) => processingNodeTypes.includes(n.data.type));
+  const trainDisabled = activeInputNodes.length === 0 || !hasProcessingNode;
 
-  // LLM input nodes present
-
-  // ML-only workflows (only visualData/audioData, no LLM nodes) need training first
-  const mlOnlyInputTypes: InputNodeType[] = ['visualData', 'audioData', 'voiceInput'];
-  const hasOnlyMLNodes = activeInputNodes.length > 0 && activeInputNodes.every((t) => mlOnlyInputTypes.includes(t));
-
-  const trainDisabled = !hasTrainingNodes;
-  const executeDisabled = hasOnlyMLNodes || activeInputNodes.length === 0;
-
-  const handleTrainModel = () => {
+  const handleTrainModel = async () => {
     if (trainDisabled) return;
-    alert('Training would start here. In production, this would initiate the ML training pipeline.');
-  };
-
-  const handleExecute = () => {
-    if (executeDisabled) return;
-    navigate(`/test/${workflowId}`);
+    setTrainError(null);
+    try {
+      const pipelineSpec = buildPipelineSpec(nodes, edges, 'train');
+      const files = collectFiles(nodes);
+      const { job_id } = await submitTrainingJob(workflowId, pipelineSpec, files);
+      setTrainingJobId(job_id);
+    } catch (err: any) {
+      setTrainError(err.message || 'Failed to submit training job');
+    }
   };
 
   return (
@@ -202,7 +205,12 @@ function EditorHeader({ workflowName, workflowId }: { workflowName: string; work
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Settings Button */}
+          {trainError && (
+            <span className="text-xs text-red-400 max-w-48 truncate" title={trainError}>
+              {trainError}
+            </span>
+          )}
+
           <button
             onClick={() => setShowSettings(true)}
             className="p-2 hover:bg-[#1a1a24] rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
@@ -211,37 +219,59 @@ function EditorHeader({ workflowName, workflowId }: { workflowName: string; work
             <Settings className="w-5 h-5" />
           </button>
 
-          {/* Train Model Button */}
-          <button
-            onClick={handleTrainModel}
-            disabled={trainDisabled}
-            title={trainDisabled ? 'Add RLHF, RLAIF, or Hyperparameter Tuning nodes to enable training' : 'Train Model'}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              trainDisabled
-                ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
-                : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
-            }`}
-          >
-            Train Model
-          </button>
+          {workflowType === 'training' && (
+            <>
+              <button
+                onClick={handleTrainModel}
+                disabled={trainDisabled}
+                title={
+                  trainDisabled
+                    ? activeInputNodes.length === 0
+                      ? 'Add an input node to enable training'
+                      : 'Add at least one processing node to enable training'
+                    : 'Run Training Pipeline on GPU'
+                }
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                  trainDisabled
+                    ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
+                    : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
+                }`}
+              >
+                <Play className="w-4 h-4" />
+                Run Training
+              </button>
+              <button
+                onClick={() => navigate(`/run/${workflowId}`)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-[#6366f1] text-white hover:bg-[#4f46e5] transition-colors"
+                title="Open interactive inference"
+              >
+                <Zap className="w-4 h-4" />
+                Inference
+              </button>
+            </>
+          )}
 
-          {/* Execute Button */}
-          <button
-            onClick={handleExecute}
-            disabled={executeDisabled}
-            title={executeDisabled ? (activeInputNodes.length === 0 ? 'Add input nodes first' : 'ML-only workflows need training first') : 'Execute Inference'}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              executeDisabled
-                ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
-                : 'bg-[#00d4ff] text-[#0a0a0f] hover:bg-[#00b8d4]'
-            }`}
-          >
-            <Play className="w-4 h-4" />
-            Execute
-          </button>
+          {workflowType === 'deployment' && (
+            <button
+              onClick={() => navigate(`/run/${workflowId}`)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-[#6366f1] text-white hover:bg-[#4f46e5] transition-colors"
+            >
+              <Zap className="w-4 h-4" />
+              Test Inference
+            </button>
+          )}
         </div>
       </header>
+
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {trainingJobId && (
+        <TrainingModal
+          jobId={trainingJobId}
+          workflowId={workflowId}
+          onClose={() => setTrainingJobId(null)}
+        />
+      )}
     </>
   );
 }
@@ -267,10 +297,10 @@ function EditorContent({ workflowId }: { workflowId: string }) {
     }
   }, [workflowId]);
 
-  // Ensure an output node always exists
+  // Ensure a saveModel node always exists
   useEffect(() => {
-    if (!hasNodeOfType('output')) {
-      addNode('output', { x: 750, y: 300 });
+    if (!hasNodeOfType('saveModel')) {
+      addNode('saveModel', { x: 750, y: 300 });
     }
   }, [nodes.length]);
 
@@ -300,9 +330,13 @@ function EditorContent({ workflowId }: { workflowId: string }) {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#0a0a0f]">
-      <EditorHeader workflowName={workflow.name} workflowId={workflowId} />
+      <EditorHeader
+        workflowName={workflow.name}
+        workflowId={workflowId}
+        workflowType={workflow.type}
+      />
       <div className="flex-1 flex overflow-hidden">
-        <NodePalette />
+        <NodePalette mode={workflow.type as WorkflowPaletteMode} />
         <WorkflowCanvas />
         <PropertiesPanel />
       </div>

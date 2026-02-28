@@ -50,7 +50,7 @@ import { Hono } from "hono";
 export interface Env {
   // KV namespace — workflows (workflow:<id>) and job metadata (job:<id>)
   JOB_KV: KVNamespace;
-  // R2 bucket — model weights (models/<name>/...)
+  // R2 bucket — model weights (models/<name>/...) and uploads (uploads/<wfId>/...)
   R2_MODELS: R2Bucket;
   /**
    * Modal endpoint base URL.
@@ -71,6 +71,8 @@ export interface Env {
   ACTIAN_HTTP_URL: string;
   // CORS origins (comma-separated, or *)
   ALLOWED_ORIGINS: string;
+  // OpenAI API key for LLM chat proxy
+  OPENAI_API_KEY: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -322,6 +324,239 @@ app.post("/api/search", async (c) => {
     body: JSON.stringify(body),
   });
   return new Response(resp.body, { status: resp.status, headers: { "Content-Type": "application/json" } });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Per-workflow training & upload endpoints
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Build a minimal ustar tar archive from in-memory file entries. */
+function buildTar(entries: Array<{ name: string; data: Uint8Array }>): Uint8Array {
+  const parts: Uint8Array[] = [];
+  for (const { name, data } of entries) {
+    const hdr = new Uint8Array(512);
+    const enc = (s: string, off: number, len: number) => {
+      for (let i = 0; i < Math.min(s.length, len); i++) hdr[off + i] = s.charCodeAt(i);
+    };
+    enc(name.slice(0, 100), 0, 100);
+    enc("0000644\0", 100, 8);
+    enc("0000000\0", 108, 8);
+    enc("0000000\0", 116, 8);
+    enc(data.length.toString(8).padStart(11, "0") + "\0", 124, 12);
+    enc(Math.floor(Date.now() / 1000).toString(8).padStart(11, "0") + "\0", 136, 12);
+    for (let i = 148; i < 156; i++) hdr[i] = 0x20;
+    hdr[156] = 0x30;
+    let cs = 0;
+    for (let i = 0; i < 512; i++) cs += hdr[i];
+    enc(cs.toString(8).padStart(6, "0") + "\0 ", 148, 8);
+    parts.push(hdr);
+    const padded = new Uint8Array(Math.ceil(data.length / 512) * 512);
+    padded.set(data);
+    parts.push(padded);
+  }
+  parts.push(new Uint8Array(1024)); // EOF blocks
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+
+// POST /api/workflow/:id/train — accepts {pipeline_spec, files[]} → forwards to Modal /train
+app.post("/api/workflow/:id/train", async (c) => {
+  const workflowId = c.req.param("id");
+  const jobId      = crypto.randomUUID();
+  const fd         = await c.req.formData();
+
+  fd.set("job_id",      jobId);
+  fd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
+  fd.set("r2_key_id",   c.env.R2_ACCESS_KEY_ID     || "");
+  fd.set("r2_secret",   c.env.R2_SECRET_ACCESS_KEY || "");
+  fd.set("r2_bucket",   "hackillinois-models");
+  fd.set("actian_url",  c.env.ACTIAN_HTTP_URL       || "");
+
+  const resp   = await fetch(modalUrl(c.env, "train"), {
+    method: "POST", headers: modalHeaders(c.env), body: fd,
+  });
+  const data   = (await resp.json()) as Record<string, unknown>;
+  const retId  = (data.job_id as string) || jobId;
+
+  await c.env.JOB_KV.put(
+    `job:${retId}`,
+    JSON.stringify({ status: "running", workflowId, startedAt: new Date().toISOString() }),
+    { expirationTtl: 60 * 60 * 24 * 7 }
+  );
+  return c.json({ job_id: retId, status: "running" }, 202);
+});
+
+// POST /api/workflow/:id/upload — store training files in R2 uploads/<workflowId>/
+app.post("/api/workflow/:id/upload", async (c) => {
+  const workflowId = c.req.param("id");
+  const fd         = await c.req.formData();
+  const stored: Array<{ name: string; key: string }> = [];
+
+  for (const [, value] of fd.entries()) {
+    if (value instanceof File) {
+      const key  = `uploads/${workflowId}/${value.name}`;
+      const buf  = await value.arrayBuffer();
+      await c.env.R2_MODELS.put(key, buf, { httpMetadata: { contentType: value.type || "application/octet-stream" } });
+      stored.push({ name: value.name, key });
+    }
+  }
+  return c.json({ files: stored });
+});
+
+// GET /api/models/:name/download — stream all model files as a tar archive
+app.get("/api/models/:name/download", async (c) => {
+  const name   = c.req.param("name");
+  const listed = await c.env.R2_MODELS.list({ prefix: `models/${name}/` });
+
+  const entries: Array<{ name: string; data: Uint8Array }> = [];
+  for (const obj of listed.objects) {
+    const item = await c.env.R2_MODELS.get(obj.key);
+    if (!item) continue;
+    const data = new Uint8Array(await item.arrayBuffer());
+    const rel  = obj.key.replace(`models/${name}/`, "");
+    entries.push({ name: `${name}/${rel}`, data });
+  }
+
+  if (entries.length === 0) return c.json({ error: "Model not found" }, 404);
+
+  const tar = buildTar(entries);
+  return new Response(tar, {
+    headers: {
+      "Content-Type":        "application/x-tar",
+      "Content-Disposition": `attachment; filename="${name}.tar"`,
+      "Content-Length":      String(tar.byteLength),
+    },
+  });
+});
+
+// POST /api/llm/chat — proxy to OpenAI or Ollama
+app.post("/api/llm/chat", async (c) => {
+  const body = await c.req.json<{
+    provider: string;
+    model?: string;
+    messages: Array<{ role: string; content: string }>;
+    ollamaUrl?: string;
+    systemPrompt?: string;
+  }>();
+
+  const { provider, model, messages, ollamaUrl, systemPrompt } = body;
+  const fullMessages = systemPrompt
+    ? [{ role: "system", content: systemPrompt }, ...messages]
+    : messages;
+
+  if (provider === "openai" || provider === "openai_large") {
+    const oaiModel = provider === "openai_large" ? "gpt-4o" : (model || "gpt-4o-mini");
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${c.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({ model: oaiModel, messages: fullMessages }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      return c.json({ error: `OpenAI error: ${err.slice(0, 200)}` }, 502);
+    }
+    const data = (await resp.json()) as { choices: Array<{ message: { content: string } }> };
+    return c.json({ content: data.choices[0]?.message?.content || "" });
+  }
+
+  // Ollama variants
+  const baseUrl = ollamaUrl?.replace(/\/$/, "") || "http://localhost:11434";
+  const ollamaModel =
+    provider === "ollama_qwen"  ? "qwen2.5:0.5b"  :
+    provider === "ollama_llama" ? "llama3.2:1b"    :
+    (model || "llama3.2:1b");
+
+  const resp = await fetch(`${baseUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: ollamaModel, messages: fullMessages, stream: false }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    return c.json({ error: `Ollama error: ${err.slice(0, 200)}` }, 502);
+  }
+  const data = (await resp.json()) as { message?: { content: string } };
+  return c.json({ content: data.message?.content || "" });
+});
+
+// POST /api/deploy/:workflowId — persistent inference endpoint for deployment workflows
+app.post("/api/deploy/:workflowId", async (c) => {
+  const workflowId = c.req.param("workflowId");
+
+  // Look up workflow from KV
+  const wf = (await c.env.JOB_KV.get(`workflow:${workflowId}`, "json")) as Record<string, unknown> | null;
+  if (!wf) return c.json({ error: "Workflow not found" }, 404);
+
+  const deploymentSpec = wf.deploymentSpec as string | undefined;
+
+  // Build multipart form with uploaded data + pipeline spec
+  const fd = new FormData();
+  if (deploymentSpec) fd.set("pipeline_spec", deploymentSpec);
+  fd.set("actian_url", c.env.ACTIAN_HTTP_URL || "");
+  fd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
+  fd.set("r2_key_id",   c.env.R2_ACCESS_KEY_ID     || "");
+  fd.set("r2_secret",   c.env.R2_SECRET_ACCESS_KEY || "");
+  fd.set("r2_bucket",   "hackillinois-models");
+
+  // Attach any uploaded files from this request
+  const contentType = c.req.header("Content-Type") || "";
+  if (contentType.includes("multipart/form-data")) {
+    const inFd = await c.req.formData();
+    for (const [key, value] of inFd.entries()) {
+      fd.set(key, value);
+    }
+  } else if (contentType.includes("application/json")) {
+    const body = await c.req.json();
+    fd.set("input_json", JSON.stringify(body));
+  } else {
+    const text = await c.req.text();
+    if (text) fd.set("input_text", text);
+  }
+
+  // Call Modal for inference
+  const inferResp = await fetch(modalUrl(c.env, "infer"), {
+    method: "POST", headers: modalHeaders(c.env), body: fd,
+  });
+  if (!inferResp.ok) {
+    return c.json({ error: "Inference failed", status: inferResp.status }, 502);
+  }
+  const result = (await inferResp.json()) as Record<string, unknown>;
+
+  // Optional LLM augmentation if the workflow has an llmNode
+  const nodes = (wf.nodes || []) as Array<{ data: { type: string; parameters: Record<string, unknown> } }>;
+  const llmNode = nodes.find((n) => n.data?.type === "llmNode");
+
+  if (llmNode) {
+    const p = llmNode.data.parameters;
+    try {
+      const llmBody = {
+        provider:     p.provider as string || "openai",
+        model:        p.model as string | undefined,
+        ollamaUrl:    p.ollamaUrl as string | undefined,
+        systemPrompt: p.systemPrompt as string || "Describe the model output.",
+        messages: [
+          { role: "user", content: `Model output: ${JSON.stringify(result.predictions || result)}` }
+        ],
+      };
+      const llmResp = await fetch(new URL("/api/llm/chat", c.req.url).toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...modalHeaders(c.env) },
+        body: JSON.stringify(llmBody),
+      });
+      const llmData = (await llmResp.json()) as { content?: string };
+      return c.json({ result, llmResponse: llmData.content || "" });
+    } catch (_) {
+      return c.json({ result });
+    }
+  }
+
+  return c.json({ result });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

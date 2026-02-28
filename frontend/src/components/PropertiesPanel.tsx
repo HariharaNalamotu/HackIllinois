@@ -1,18 +1,33 @@
-import React, { useRef } from 'react';
-import { Settings, Trash2, Upload, Plus, X, FolderOpen, File } from 'lucide-react';
-import { useWorkflowStore, NodeType, ToolParameter } from '../store/workflowStore';
-import { nodeDefinitions, modelOptions, chunkingStrategyOptions, evalStrategyOptions, parameterTypeOptions, voiceTaskOptions } from '../types/nodes';
-import { v4 as uuidv4 } from 'uuid';
+import React, { useRef, useCallback, useState } from 'react';
+import { Settings, Trash2, Upload, FolderOpen, File, X, Info, CheckCircle, Copy, Globe } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { useWorkflowStore, NodeType } from '../store/workflowStore';
+import { useWorkflowsStore } from '../store/workflowsStore';
+import {
+  nodeDefinitions,
+  EMBEDDING_MODELS,
+  IMAGE_CLASSIFIER_MODELS,
+  OBJECT_DETECT_MODELS,
+  AUDIO_MODELS,
+  CHUNKING_METHODS,
+  TABULAR_MODEL_TYPES,
+  AUDIO_TASKS,
+  BOUNDING_BOX_FORMATS,
+  FINE_TUNE_METHODS,
+  POOLING_OPTIONS,
+  LLM_PROVIDERS,
+} from '../types/nodes';
 
-// Reusable form components
-interface SelectFieldProps {
+const WORKER_BASE = 'https://hackillinois-api.harihara-nalamotu.workers.dev';
+
+// ── Reusable primitives ───────────────────────────────────────────────────────
+
+const SelectField: React.FC<{
   label: string;
   value: string;
   options: { value: string; label: string }[];
-  onChange: (value: string) => void;
-}
-
-const SelectField: React.FC<SelectFieldProps> = ({ label, value, options, onChange }) => (
+  onChange: (v: string) => void;
+}> = ({ label, value, options, onChange }) => (
   <div className="space-y-1">
     <label className="text-xs text-gray-400 uppercase tracking-wide">{label}</label>
     <select
@@ -20,24 +35,22 @@ const SelectField: React.FC<SelectFieldProps> = ({ label, value, options, onChan
       onChange={(e) => onChange(e.target.value)}
       className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-[#00d4ff] transition-colors"
     >
-      {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
         </option>
       ))}
     </select>
   </div>
 );
 
-interface TextFieldProps {
+const TextField: React.FC<{
   label: string;
   value: string;
-  onChange: (value: string) => void;
+  onChange: (v: string) => void;
   placeholder?: string;
   multiline?: boolean;
-}
-
-const TextField: React.FC<TextFieldProps> = ({ label, value, onChange, placeholder, multiline }) => (
+}> = ({ label, value, onChange, placeholder, multiline }) => (
   <div className="space-y-1">
     <label className="text-xs text-gray-400 uppercase tracking-wide">{label}</label>
     {multiline ? (
@@ -45,7 +58,7 @@ const TextField: React.FC<TextFieldProps> = ({ label, value, onChange, placehold
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        rows={4}
+        rows={3}
         className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-[#00d4ff] transition-colors resize-none"
       />
     ) : (
@@ -60,16 +73,14 @@ const TextField: React.FC<TextFieldProps> = ({ label, value, onChange, placehold
   </div>
 );
 
-interface NumberFieldProps {
+const NumberField: React.FC<{
   label: string;
   value: number;
-  onChange: (value: number) => void;
+  onChange: (v: number) => void;
   min?: number;
   max?: number;
   step?: number;
-}
-
-const NumberField: React.FC<NumberFieldProps> = ({ label, value, onChange, min, max, step = 1 }) => (
+}> = ({ label, value, onChange, min, max, step = 1 }) => (
   <div className="space-y-1">
     <label className="text-xs text-gray-400 uppercase tracking-wide">{label}</label>
     <input
@@ -84,713 +95,1164 @@ const NumberField: React.FC<NumberFieldProps> = ({ label, value, onChange, min, 
   </div>
 );
 
-interface CheckboxFieldProps {
+const Toggle: React.FC<{
   label: string;
   checked: boolean;
-  onChange: (checked: boolean) => void;
-}
-
-const CheckboxField: React.FC<CheckboxFieldProps> = ({ label, checked, onChange }) => (
-  <label className="flex items-center gap-3 cursor-pointer group">
-    <div
-      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-        checked ? 'bg-[#00d4ff] border-[#00d4ff]' : 'border-[#2a2a38] group-hover:border-[#00d4ff]'
-      }`}
-      onClick={() => onChange(!checked)}
-    >
-      {checked && (
-        <svg className="w-3 h-3 text-[#0a0a0f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-        </svg>
-      )}
-    </div>
+  onChange: (v: boolean) => void;
+}> = ({ label, checked, onChange }) => (
+  <div className="flex items-center justify-between">
     <span className="text-sm text-gray-300">{label}</span>
-  </label>
+    <button
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+        checked ? 'bg-[#00d4ff]' : 'bg-[#2a2a38]'
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+          checked ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
+    </button>
+  </div>
 );
 
-interface FileUploadFieldProps {
-  label: string;
-  value: string | null;
-  onChange: (files: FileList | null) => void;
-  accept?: string;
-  multiple?: boolean;
-  allowFolder?: boolean;
-}
-
-const FileUploadField: React.FC<FileUploadFieldProps> = ({ label, value, onChange, accept, multiple, allowFolder }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
-
-  return (
-    <div className="space-y-2">
-      <label className="text-xs text-gray-400 uppercase tracking-wide">{label}</label>
-      <div className="space-y-2">
-        {value ? (
-          <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
-            <File className="w-4 h-4 text-[#00d4ff]" />
-            <span className="text-sm text-gray-300 flex-1 truncate">{value}</span>
-            <button
-              onClick={() => onChange(null)}
-              className="text-gray-500 hover:text-red-400 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={accept}
-              multiple={multiple}
-              onChange={(e) => onChange(e.target.files)}
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex-1 flex items-center justify-center gap-2 bg-[#1a1a24] border border-dashed border-[#2a2a38] rounded-md px-3 py-3 text-sm text-gray-400 hover:border-[#00d4ff] hover:text-[#00d4ff] transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              <span>{multiple ? 'Upload Files' : 'Upload File'}</span>
-            </button>
-            {allowFolder && (
-              <>
-                <input
-                  ref={folderInputRef}
-                  type="file"
-                  // @ts-ignore - webkitdirectory is not in types
-                  webkitdirectory=""
-                  onChange={(e) => onChange(e.target.files)}
-                  className="hidden"
-                />
-                <button
-                  onClick={() => folderInputRef.current?.click()}
-                  className="flex items-center justify-center gap-2 bg-[#1a1a24] border border-dashed border-[#2a2a38] rounded-md px-3 py-3 text-sm text-gray-400 hover:border-[#00d4ff] hover:text-[#00d4ff] transition-colors"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                </button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+const SourceToggle: React.FC<{ value: string; onChange: (v: string) => void }> = ({
+  value,
+  onChange,
+}) => (
+  <div className="space-y-1">
+    <label className="text-xs text-gray-400 uppercase tracking-wide">Data Source</label>
+    <div className="flex rounded-md overflow-hidden border border-[#2a2a38]">
+      {['upload', 'api'].map((src) => (
+        <button
+          key={src}
+          onClick={() => onChange(src)}
+          className={`flex-1 py-2 text-sm font-medium transition-colors ${
+            value === src
+              ? 'bg-[#00d4ff] text-[#0a0a0f]'
+              : 'bg-[#1a1a24] text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {src === 'upload' ? 'Upload' : 'API'}
+        </button>
+      ))}
     </div>
+  </div>
+);
+
+const FolderUploadButton: React.FC<{ onFiles: (files: FileList) => void }> = ({ onFiles }) => {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={ref}
+        type="file"
+        // @ts-ignore
+        webkitdirectory=""
+        className="hidden"
+        onChange={(e) => e.target.files && onFiles(e.target.files)}
+      />
+      <button
+        onClick={() => ref.current?.click()}
+        className="w-full flex items-center justify-center gap-2 bg-[#1a1a24] border border-dashed border-[#2a2a38] rounded-md px-3 py-3 text-sm text-gray-400 hover:border-[#00d4ff] hover:text-[#00d4ff] transition-colors"
+      >
+        <FolderOpen className="w-4 h-4" />
+        Browse Folder
+      </button>
+    </>
   );
 };
 
-// Tool Parameter Editor for Agent Tools
-interface ToolParameterEditorProps {
-  parameters: ToolParameter[];
-  onChange: (parameters: ToolParameter[]) => void;
-}
+const Section: React.FC<{ title: string }> = ({ title }) => (
+  <div className="border-t border-[#22222e] pt-4">
+    <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">{title}</p>
+  </div>
+);
 
-const ToolParameterEditor: React.FC<ToolParameterEditorProps> = ({ parameters, onChange }) => {
-  const addParameter = () => {
-    const newParam: ToolParameter = {
-      id: uuidv4(),
-      name: '',
-      type: 'string',
-      description: '',
-      required: false,
-    };
-    onChange([...parameters, newParam]);
-  };
+const OutputNameField: React.FC<{ value: string; onChange: (v: string) => void }> = ({
+  value,
+  onChange,
+}) => (
+  <TextField
+    label="Output Model Name"
+    value={value}
+    onChange={onChange}
+    placeholder="e.g., my-model-v1"
+  />
+);
 
-  const updateParameter = (id: string, updates: Partial<ToolParameter>) => {
-    onChange(parameters.map((p) => (p.id === id ? { ...p, ...updates } : p)));
-  };
+// ── Image format auto-detection ───────────────────────────────────────────────
 
-  const removeParameter = (id: string) => {
-    onChange(parameters.filter((p) => p.id !== id));
-  };
+const detectImageFormat = (files: FileList): 'imagefolder' | 'boundingbox' | 'unknown' => {
+  const names = Array.from(files).map((f) => (f as any).webkitRelativePath || f.name);
+  const annotationExts = ['.json', '.xml', '.txt', '.csv'];
+  const hasAnnotation = names.some((n) =>
+    annotationExts.some((ext) => n.toLowerCase().endsWith(ext))
+  );
+  if (hasAnnotation) return 'boundingbox';
+  const dirs = new Set(names.map((n) => n.split('/').slice(0, -1).join('/')).filter(Boolean));
+  if (dirs.size > 1) return 'imagefolder';
+  return 'unknown';
+};
 
-  const addObjectProperty = (paramId: string) => {
-    const param = parameters.find((p) => p.id === paramId);
-    if (param) {
-      const props = param.objectProperties || [];
-      updateParameter(paramId, { objectProperties: [...props, { key: '', value: '' }] });
-    }
-  };
+// ── Node-specific forms ───────────────────────────────────────────────────────
 
-  const updateObjectProperty = (paramId: string, index: number, key: string, value: string) => {
-    const param = parameters.find((p) => p.id === paramId);
-    if (param && param.objectProperties) {
-      const newProps = [...param.objectProperties];
-      newProps[index] = { key, value };
-      updateParameter(paramId, { objectProperties: newProps });
-    }
-  };
-
-  const removeObjectProperty = (paramId: string, index: number) => {
-    const param = parameters.find((p) => p.id === paramId);
-    if (param && param.objectProperties) {
-      const newProps = param.objectProperties.filter((_, i) => i !== index);
-      updateParameter(paramId, { objectProperties: newProps });
-    }
-  };
-
-  const addArrayValue = (paramId: string) => {
-    const param = parameters.find((p) => p.id === paramId);
-    if (param) {
-      const values = param.arrayValues || [];
-      updateParameter(paramId, { arrayValues: [...values, ''] });
-    }
-  };
-
-  const updateArrayValue = (paramId: string, index: number, value: string) => {
-    const param = parameters.find((p) => p.id === paramId);
-    if (param && param.arrayValues) {
-      const newValues = [...param.arrayValues];
-      newValues[index] = value;
-      updateParameter(paramId, { arrayValues: newValues });
-    }
-  };
-
-  const removeArrayValue = (paramId: string, index: number) => {
-    const param = parameters.find((p) => p.id === paramId);
-    if (param && param.arrayValues) {
-      const newValues = param.arrayValues.filter((_, i) => i !== index);
-      updateParameter(paramId, { arrayValues: newValues });
-    }
-  };
+const TextInputForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const fileRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <label className="text-xs text-gray-400 uppercase tracking-wide">Function Parameters</label>
-        <button
-          onClick={addParameter}
-          className="flex items-center gap-1 text-xs text-[#00d4ff] hover:text-[#00b8d4] transition-colors"
-        >
-          <Plus className="w-3 h-3" />
-          Add Parameter
-        </button>
-      </div>
-
-      {parameters.length === 0 ? (
-        <p className="text-xs text-gray-600 italic">No parameters defined</p>
+    <div className="space-y-4">
+      <SourceToggle
+        value={p.dataSource as string}
+        onChange={(v) => update(node.id, { dataSource: v })}
+      />
+      {p.dataSource === 'api' ? (
+        <TextField
+          label="API URL"
+          value={p.apiUrl as string}
+          onChange={(v) => update(node.id, { apiUrl: v })}
+          placeholder="https://..."
+        />
       ) : (
-        <div className="space-y-4">
-          {parameters.map((param) => (
-            <div key={param.id} className="bg-[#12121a] border border-[#2a2a38] rounded-lg p-3 space-y-3">
-              <div className="flex items-start justify-between">
-                <input
-                  type="text"
-                  value={param.name}
-                  onChange={(e) => updateParameter(param.id, { name: e.target.value })}
-                  placeholder="Parameter name"
-                  className="bg-transparent border-b border-[#2a2a38] text-sm text-gray-200 focus:outline-none focus:border-[#00d4ff] pb-1"
-                />
-                <button
-                  onClick={() => removeParameter(param.id)}
-                  className="text-gray-500 hover:text-red-400 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={param.type}
-                  onChange={(e) => updateParameter(param.id, { type: e.target.value as ToolParameter['type'] })}
-                  className="bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300"
-                >
-                  {parameterTypeOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-                <label className="flex items-center gap-2 text-xs text-gray-400">
-                  <input
-                    type="checkbox"
-                    checked={param.required}
-                    onChange={(e) => updateParameter(param.id, { required: e.target.checked })}
-                    className="rounded"
-                  />
-                  Required
-                </label>
-              </div>
-
-              <textarea
-                value={param.description}
-                onChange={(e) => updateParameter(param.id, { description: e.target.value })}
-                placeholder="Description"
-                rows={2}
-                className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300 resize-none"
-              />
-
-              {/* Object properties */}
-              {param.type === 'object' && (
-                <div className="space-y-2 pl-3 border-l-2 border-[#2a2a38]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-500">Object Properties</span>
-                    <button
-                      onClick={() => addObjectProperty(param.id)}
-                      className="text-xs text-[#00d4ff]"
-                    >
-                      + Add
-                    </button>
-                  </div>
-                  {(param.objectProperties || []).map((prop, idx) => (
-                    <div key={idx} className="flex gap-2 items-center">
-                      <input
-                        type="text"
-                        value={prop.key}
-                        onChange={(e) => updateObjectProperty(param.id, idx, e.target.value, prop.value)}
-                        placeholder="Key"
-                        className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300"
-                      />
-                      <input
-                        type="text"
-                        value={prop.value}
-                        onChange={(e) => updateObjectProperty(param.id, idx, prop.key, e.target.value)}
-                        placeholder="Value"
-                        className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300"
-                      />
-                      <button
-                        onClick={() => removeObjectProperty(param.id, idx)}
-                        className="text-gray-500 hover:text-red-400"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Array values */}
-              {param.type === 'array' && (
-                <div className="space-y-2 pl-3 border-l-2 border-[#2a2a38]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-500">Array Values</span>
-                    <button
-                      onClick={() => addArrayValue(param.id)}
-                      className="text-xs text-[#00d4ff]"
-                    >
-                      + Add
-                    </button>
-                  </div>
-                  {(param.arrayValues || []).map((val, idx) => (
-                    <div key={idx} className="flex gap-2 items-center">
-                      <input
-                        type="text"
-                        value={val}
-                        onChange={(e) => updateArrayValue(param.id, idx, e.target.value)}
-                        placeholder={`Value ${idx + 1}`}
-                        className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300"
-                      />
-                      <button
-                        onClick={() => removeArrayValue(param.id, idx)}
-                        className="text-gray-500 hover:text-red-400"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+        <div className="space-y-2">
+          <label className="text-xs text-gray-400 uppercase tracking-wide">Files</label>
+          {p.uploadedFiles ? (
+            <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
+              <File className="w-4 h-4 text-[#00d4ff]" />
+              <span className="text-sm text-gray-300 flex-1 truncate">
+                {p.uploadedFiles as string}
+              </span>
+              <button
+                onClick={() => update(node.id, { uploadedFiles: null })}
+                className="text-gray-500 hover:text-red-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          ))}
+          ) : (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept=".txt,.pdf,.md,.docx,.csv,.json"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length)
+                    update(node.id, {
+                      uploadedFiles: `${e.target.files.length} file(s) selected`,
+                    });
+                }}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 bg-[#1a1a24] border border-dashed border-[#2a2a38] rounded-md px-3 py-3 text-sm text-gray-400 hover:border-[#00d4ff] hover:text-[#00d4ff] transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                Upload Files (.txt, .pdf, .md, .docx)
+              </button>
+              <FolderUploadButton
+                onFiles={(files) =>
+                  update(node.id, { uploadedFiles: `${files.length} file(s) from folder` })
+                }
+              />
+            </>
+          )}
         </div>
       )}
     </div>
   );
 };
 
-// Node-specific form components
-const TextRetrievalForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
+const formatBadgeMap: Record<string, { label: string; color: string }> = {
+  imagefolder: { label: 'ImageFolder (classification)', color: '#a855f7' },
+  boundingbox: { label: 'Bounding Box (detection)', color: '#f472b6' },
+  unknown: { label: 'Unknown — please override', color: '#6b7280' },
+};
 
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+const ImageInputForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+
+  const handleFiles = useCallback(
+    (files: FileList) => {
+      const detected = detectImageFormat(files);
+      update(node.id, {
+        uploadedFiles: `${files.length} file(s) selected`,
+        detectedFormat: detected,
+        imageFormat: detected,
+      });
+    },
+    [node.id, update]
+  );
+
+  const fmt = (p.imageFormat as string) || 'unknown';
+  const badge = formatBadgeMap[fmt] ?? formatBadgeMap.unknown;
 
   return (
     <div className="space-y-4">
-      <SelectField
-        label="Base Decoder Model"
-        value={params.baseDecoderModel}
-        options={modelOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { baseDecoderModel: v })}
+      <SourceToggle
+        value={p.dataSource as string}
+        onChange={(v) => update(node.id, { dataSource: v })}
       />
-      <FileUploadField
-        label="Vector DB Dataset"
-        value={params.vectorDBDataset}
-        onChange={(files) => updateNodeParameters(selectedNode.id, { vectorDBDataset: files?.[0]?.name || null })}
-        multiple
-        allowFolder
+      {p.dataSource === 'api' ? (
+        <TextField
+          label="API URL"
+          value={p.apiUrl as string}
+          onChange={(v) => update(node.id, { apiUrl: v })}
+          placeholder="https://..."
+        />
+      ) : (
+        <div className="space-y-3">
+          {p.uploadedFiles ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
+                <File className="w-4 h-4" style={{ color: badge.color }} />
+                <span className="text-sm text-gray-300 flex-1 truncate">
+                  {p.uploadedFiles as string}
+                </span>
+                <button
+                  onClick={() =>
+                    update(node.id, {
+                      uploadedFiles: null,
+                      detectedFormat: null,
+                      imageFormat: 'unknown',
+                    })
+                  }
+                  className="text-gray-500 hover:text-red-400"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-xs text-gray-400">Auto-detected:</span>
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded-full"
+                  style={{ backgroundColor: badge.color + '20', color: badge.color }}
+                >
+                  {badge.label}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <FolderUploadButton onFiles={handleFiles} />
+          )}
+          <div className="space-y-1">
+            <label className="text-xs text-gray-400 uppercase tracking-wide">
+              Override Format
+            </label>
+            <select
+              value={fmt}
+              onChange={(e) => update(node.id, { imageFormat: e.target.value })}
+              className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-[#00d4ff] transition-colors"
+            >
+              <option value="unknown">Auto-detected</option>
+              <option value="imagefolder">ImageFolder (classification)</option>
+              <option value="boundingbox">Bounding Box (detection)</option>
+            </select>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AudioInputForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="space-y-4">
+      <SourceToggle
+        value={p.dataSource as string}
+        onChange={(v) => update(node.id, { dataSource: v })}
       />
-      <SelectField
-        label="Chunking Strategy"
-        value={params.chunkingStrategy}
-        options={chunkingStrategyOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { chunkingStrategy: v })}
+      {p.dataSource === 'api' ? (
+        <TextField
+          label="API URL"
+          value={p.apiUrl as string}
+          onChange={(v) => update(node.id, { apiUrl: v })}
+          placeholder="https://..."
+        />
+      ) : (
+        <div className="space-y-2">
+          {p.uploadedFiles ? (
+            <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
+              <File className="w-4 h-4 text-[#22c55e]" />
+              <span className="text-sm text-gray-300 flex-1 truncate">
+                {p.uploadedFiles as string}
+              </span>
+              <button
+                onClick={() => update(node.id, { uploadedFiles: null })}
+                className="text-gray-500 hover:text-red-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept=".wav,.mp3,.flac,.ogg,.m4a"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length)
+                    update(node.id, {
+                      uploadedFiles: `${e.target.files.length} file(s) selected`,
+                    });
+                }}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 bg-[#1a1a24] border border-dashed border-[#2a2a38] rounded-md px-3 py-3 text-sm text-gray-400 hover:border-[#22c55e] hover:text-[#22c55e] transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                Upload Audio (.wav, .mp3, .flac)
+              </button>
+              <FolderUploadButton
+                onFiles={(files) =>
+                  update(node.id, { uploadedFiles: `${files.length} file(s) from folder` })
+                }
+              />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SpreadsheetInputForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="space-y-4">
+      <SourceToggle
+        value={p.dataSource as string}
+        onChange={(v) => update(node.id, { dataSource: v })}
       />
-      <NumberField
-        label="Chunking Size"
-        value={params.chunkingSize}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { chunkingSize: v })}
-        min={64}
-        max={4096}
-        step={64}
+      {p.dataSource === 'api' ? (
+        <TextField
+          label="API URL"
+          value={p.apiUrl as string}
+          onChange={(v) => update(node.id, { apiUrl: v })}
+          placeholder="https://..."
+        />
+      ) : (
+        <div className="space-y-2">
+          {p.uploadedFiles ? (
+            <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
+              <File className="w-4 h-4 text-[#f97316]" />
+              <span className="text-sm text-gray-300 flex-1 truncate">
+                {p.uploadedFiles as string}
+              </span>
+              <button
+                onClick={() => update(node.id, { uploadedFiles: null })}
+                className="text-gray-500 hover:text-red-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept=".csv,.xlsx,.xls,.json"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length)
+                    update(node.id, {
+                      uploadedFiles: `${e.target.files.length} file(s) selected`,
+                    });
+                }}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 bg-[#1a1a24] border border-dashed border-[#2a2a38] rounded-md px-3 py-3 text-sm text-gray-400 hover:border-[#f97316] hover:text-[#f97316] transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                Upload Spreadsheet (.csv, .xlsx, .json)
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      <TextField
+        label="Target Column"
+        value={p.targetColumn as string}
+        onChange={(v) => update(node.id, { targetColumn: v })}
+        placeholder="e.g., label, price, category"
       />
     </div>
   );
 };
 
-const AgenticLLMForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+const ChunkNodeForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const showSizeOpts = ['fixed_size', 'sliding_window'].includes(p.method as string);
 
   return (
     <div className="space-y-4">
       <SelectField
-        label="Sub-Agent Model"
-        value={params.subAgentModel}
-        options={modelOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentModel: v })}
+        label="Chunking Method"
+        value={p.method as string}
+        options={CHUNKING_METHODS}
+        onChange={(v) => update(node.id, { method: v })}
+      />
+      {p.method === 'auto' && (
+        <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+          <Info className="w-4 h-4 text-[#00d4ff] mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-gray-400">
+            AI will analyze your data and automatically select the best chunking strategy at
+            runtime.
+          </p>
+        </div>
+      )}
+      {showSizeOpts && (
+        <>
+          <NumberField
+            label="Chunk Size (tokens)"
+            value={p.chunkSize as number}
+            onChange={(v) => update(node.id, { chunkSize: v })}
+            min={64}
+            max={4096}
+            step={64}
+          />
+          <NumberField
+            label="Overlap (tokens)"
+            value={p.overlap as number}
+            onChange={(v) => update(node.id, { overlap: v })}
+            min={0}
+            max={512}
+            step={16}
+          />
+        </>
+      )}
+    </div>
+  );
+};
+
+const EmbeddingModelForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <SelectField
+        label="Base Embedding Model"
+        value={p.model as string}
+        options={EMBEDDING_MODELS}
+        onChange={(v) => update(node.id, { model: v })}
+      />
+      <Toggle
+        label="Fine-tune on your data?"
+        checked={p.fineTune as boolean}
+        onChange={(v) => update(node.id, { fineTune: v })}
+      />
+      {!!p.fineTune && (
+        <>
+          <Section title="Fine-tuning" />
+          <SelectField
+            label="Training Method"
+            value={p.method as string}
+            options={FINE_TUNE_METHODS}
+            onChange={(v) => update(node.id, { method: v })}
+          />
+          <NumberField
+            label="Epochs"
+            value={p.epochs as number}
+            onChange={(v) => update(node.id, { epochs: v })}
+            min={1}
+            max={100}
+          />
+          <NumberField
+            label="Learning Rate"
+            value={p.learningRate as number}
+            onChange={(v) => update(node.id, { learningRate: v })}
+            min={1e-6}
+            max={0.1}
+            step={1e-5}
+          />
+          <OutputNameField
+            value={p.outputName as string}
+            onChange={(v) => update(node.id, { outputName: v })}
+          />
+        </>
+      )}
+    </div>
+  );
+};
+
+const ImageClassifierForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <SelectField
+        label="Pretrained Model"
+        value={p.baseModel as string}
+        options={IMAGE_CLASSIFIER_MODELS}
+        onChange={(v) => update(node.id, { baseModel: v })}
+      />
+      <Toggle
+        label="Transfer Learning"
+        checked={p.transfer as boolean}
+        onChange={(v) => update(node.id, { transfer: v })}
+      />
+      <Section title="Training" />
+      <NumberField
+        label="Num Classes"
+        value={p.numClasses as number}
+        onChange={(v) => update(node.id, { numClasses: v })}
+        min={2}
+        max={1000}
+      />
+      <NumberField
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
+        min={1}
+        max={500}
+      />
+      <NumberField
+        label="Batch Size"
+        value={p.batchSize as number}
+        onChange={(v) => update(node.id, { batchSize: v })}
+        min={1}
+        max={512}
+      />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
+      />
+    </div>
+  );
+};
+
+const ImageCNNForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <Section title="Architecture" />
+      <NumberField
+        label="Num Layers"
+        value={p.numLayers as number}
+        onChange={(v) => update(node.id, { numLayers: v })}
+        min={1}
+        max={8}
       />
       <TextField
-        label="Sub-Agent Prompt"
-        value={params.subAgentPrompt}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentPrompt: v })}
-        placeholder="Enter the prompt for the sub-agent..."
-        multiline
+        label="Filters (comma-separated)"
+        value={p.filters as string}
+        onChange={(v) => update(node.id, { filters: v })}
+        placeholder="32,64,128"
+      />
+      <NumberField
+        label="Kernel Size"
+        value={p.kernelSize as number}
+        onChange={(v) => update(node.id, { kernelSize: v })}
+        min={1}
+        max={11}
+        step={2}
+      />
+      <SelectField
+        label="Pooling"
+        value={p.pooling as string}
+        options={POOLING_OPTIONS}
+        onChange={(v) => update(node.id, { pooling: v })}
+      />
+      <NumberField
+        label="Num Classes"
+        value={p.numClasses as number}
+        onChange={(v) => update(node.id, { numClasses: v })}
+        min={2}
+        max={1000}
+      />
+      <Section title="Training" />
+      <NumberField
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
+        min={1}
+        max={500}
+      />
+      <NumberField
+        label="Batch Size"
+        value={p.batchSize as number}
+        onChange={(v) => update(node.id, { batchSize: v })}
+        min={1}
+        max={512}
+      />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
       />
     </div>
   );
 };
 
-const VisualDataForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+const ImageCAEForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
 
   return (
     <div className="space-y-4">
-      <FileUploadField
-        label="Training Dataset"
-        value={params.dataset}
-        onChange={(files) => updateNodeParameters(selectedNode.id, { dataset: files?.[0]?.name || null })}
-        accept="image/*,video/*"
-        multiple
-        allowFolder
+      <Section title="Architecture" />
+      <NumberField
+        label="Num Layers"
+        value={p.numLayers as number}
+        onChange={(v) => update(node.id, { numLayers: v })}
+        min={1}
+        max={8}
+      />
+      <TextField
+        label="Filters (comma-separated)"
+        value={p.filters as string}
+        onChange={(v) => update(node.id, { filters: v })}
+        placeholder="32,64,128"
       />
       <NumberField
-        label="Epoch Count"
-        value={params.epochCount}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { epochCount: v })}
+        label="Latent Dimension"
+        value={p.latentDim as number}
+        onChange={(v) => update(node.id, { latentDim: v })}
+        min={16}
+        max={2048}
+      />
+      <Section title="Training" />
+      <NumberField
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
+        min={1}
+        max={500}
+      />
+      <NumberField
+        label="Batch Size"
+        value={p.batchSize as number}
+        onChange={(v) => update(node.id, { batchSize: v })}
+        min={1}
+        max={512}
+      />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
+      />
+    </div>
+  );
+};
+
+const ObjectDetectorForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <SelectField
+        label="Base Model"
+        value={p.baseModel as string}
+        options={OBJECT_DETECT_MODELS}
+        onChange={(v) => update(node.id, { baseModel: v })}
+      />
+      <SelectField
+        label="Annotation Format"
+        value={p.inputFormat as string}
+        options={BOUNDING_BOX_FORMATS}
+        onChange={(v) => update(node.id, { inputFormat: v })}
+      />
+      <Section title="Training" />
+      <NumberField
+        label="Num Classes"
+        value={p.numClasses as number}
+        onChange={(v) => update(node.id, { numClasses: v })}
         min={1}
         max={1000}
       />
       <NumberField
-        label="Learning Rate"
-        value={params.learningRate}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { learningRate: v })}
-        min={0.00001}
-        max={1}
-        step={0.0001}
-      />
-      <NumberField
-        label="Weight Decay"
-        value={params.weightDecay}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { weightDecay: v })}
-        min={0}
-        max={1}
-        step={0.001}
-      />
-      <SelectField
-        label="Evaluation Strategy"
-        value={params.evalStrategy}
-        options={evalStrategyOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { evalStrategy: v })}
-      />
-    </div>
-  );
-};
-
-const AudioDataForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
-
-  return (
-    <div className="space-y-4">
-      <FileUploadField
-        label="Training Dataset"
-        value={params.dataset}
-        onChange={(files) => updateNodeParameters(selectedNode.id, { dataset: files?.[0]?.name || null })}
-        accept="audio/*"
-        multiple
-        allowFolder
-      />
-      <NumberField
-        label="Epoch Count"
-        value={params.epochCount}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { epochCount: v })}
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
         min={1}
-        max={1000}
+        max={500}
+      />
+      <NumberField
+        label="Batch Size"
+        value={p.batchSize as number}
+        onChange={(v) => update(node.id, { batchSize: v })}
+        min={1}
+        max={64}
       />
       <NumberField
         label="Learning Rate"
-        value={params.learningRate}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { learningRate: v })}
-        min={0.00001}
-        max={1}
-        step={0.0001}
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-6}
       />
-      <NumberField
-        label="Weight Decay"
-        value={params.weightDecay}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { weightDecay: v })}
-        min={0}
-        max={1}
-        step={0.001}
-      />
-      <SelectField
-        label="Evaluation Strategy"
-        value={params.evalStrategy}
-        options={evalStrategyOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { evalStrategy: v })}
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
       />
     </div>
   );
 };
 
-const VoiceInputForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+const AudioSpeechModelForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
 
   return (
     <div className="space-y-4">
       <SelectField
         label="Task"
-        value={params.task}
-        options={voiceTaskOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { task: v })}
+        value={p.task as string}
+        options={AUDIO_TASKS}
+        onChange={(v) => update(node.id, { task: v })}
       />
-      <FileUploadField
-        label="Dataset"
-        value={params.dataset}
-        onChange={(files) => updateNodeParameters(selectedNode.id, { dataset: files?.[0]?.name || null })}
-        accept="audio/*"
-        multiple
-        allowFolder
+      <SelectField
+        label="Base Model"
+        value={p.baseModel as string}
+        options={AUDIO_MODELS}
+        onChange={(v) => update(node.id, { baseModel: v })}
       />
-    </div>
-  );
-};
-
-const AgentToolForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
-
-  return (
-    <div className="space-y-4">
-      <TextField
-        label="Function Name"
-        value={params.functionName}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { functionName: v })}
-        placeholder="e.g., search_web"
-      />
-      <TextField
-        label="Function Description"
-        value={params.functionDescription}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { functionDescription: v })}
-        placeholder="Describe what this function does and when to use it..."
-        multiline
-      />
-      <ToolParameterEditor
-        parameters={params.parameters || []}
-        onChange={(p) => updateNodeParameters(selectedNode.id, { parameters: p })}
-      />
-    </div>
-  );
-};
-
-const RLHFForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
-
-  return (
-    <div className="space-y-4">
+      <Section title="Training" />
+      {p.task === 'classification' && (
+        <NumberField
+          label="Num Classes"
+          value={p.numClasses as number}
+          onChange={(v) => update(node.id, { numClasses: v })}
+          min={2}
+          max={1000}
+        />
+      )}
       <NumberField
-        label="Number of Iterations"
-        value={params.iterations}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { iterations: v })}
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
         min={1}
         max={100}
       />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
+      />
     </div>
   );
 };
 
-const RLAIFForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
+const AudioCNNForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
 
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+  return (
+    <div className="space-y-4">
+      <Section title="Architecture" />
+      <NumberField
+        label="Num Layers"
+        value={p.numLayers as number}
+        onChange={(v) => update(node.id, { numLayers: v })}
+        min={1}
+        max={8}
+      />
+      <TextField
+        label="Filters (comma-separated)"
+        value={p.filters as string}
+        onChange={(v) => update(node.id, { filters: v })}
+        placeholder="32,64,128"
+      />
+      <NumberField
+        label="Kernel Size"
+        value={p.kernelSize as number}
+        onChange={(v) => update(node.id, { kernelSize: v })}
+        min={1}
+        max={11}
+        step={2}
+      />
+      <NumberField
+        label="Num Classes"
+        value={p.numClasses as number}
+        onChange={(v) => update(node.id, { numClasses: v })}
+        min={2}
+        max={1000}
+      />
+      <Section title="Audio Processing" />
+      <NumberField
+        label="Sample Rate (Hz)"
+        value={p.sampleRate as number}
+        onChange={(v) => update(node.id, { sampleRate: v })}
+        min={8000}
+        max={48000}
+        step={1000}
+      />
+      <NumberField
+        label="Mel Bands"
+        value={p.nMels as number}
+        onChange={(v) => update(node.id, { nMels: v })}
+        min={40}
+        max={256}
+        step={8}
+      />
+      <Section title="Training" />
+      <NumberField
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
+        min={1}
+        max={500}
+      />
+      <NumberField
+        label="Batch Size"
+        value={p.batchSize as number}
+        onChange={(v) => update(node.id, { batchSize: v })}
+        min={1}
+        max={512}
+      />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
+      />
+    </div>
+  );
+};
+
+const TabularModelForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const isRNN = ['lstm', 'gru', 'rnn'].includes(p.modelType as string);
 
   return (
     <div className="space-y-4">
       <SelectField
-        label="Evaluator Model"
-        value={params.evaluatorModel}
-        options={modelOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { evaluatorModel: v })}
+        label="Model Type"
+        value={p.modelType as string}
+        options={TABULAR_MODEL_TYPES}
+        onChange={(v) => update(node.id, { modelType: v })}
+      />
+      <TextField
+        label="Target Column"
+        value={p.targetColumn as string}
+        onChange={(v) => update(node.id, { targetColumn: v })}
+        placeholder="e.g., label, price"
+      />
+      <Section title="Architecture" />
+      <NumberField
+        label="Num Layers"
+        value={p.numLayers as number}
+        onChange={(v) => update(node.id, { numLayers: v })}
+        min={1}
+        max={16}
       />
       <NumberField
-        label="Number of Iterations"
-        value={params.iterations}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { iterations: v })}
+        label="Hidden Dimension"
+        value={p.hiddenDim as number}
+        onChange={(v) => update(node.id, { hiddenDim: v })}
+        min={16}
+        max={2048}
+      />
+      {isRNN && (
+        <Toggle
+          label="Bidirectional"
+          checked={p.bidirectional as boolean}
+          onChange={(v) => update(node.id, { bidirectional: v })}
+        />
+      )}
+      <Section title="Training" />
+      <NumberField
+        label="Epochs"
+        value={p.numEpochs as number}
+        onChange={(v) => update(node.id, { numEpochs: v })}
         min={1}
-        max={100}
+        max={500}
+      />
+      <NumberField
+        label="Batch Size"
+        value={p.batchSize as number}
+        onChange={(v) => update(node.id, { batchSize: v })}
+        min={1}
+        max={512}
+      />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
       />
     </div>
   );
 };
 
-const SubAgentForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
+const DeployModelNodeForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const workflows = useWorkflowsStore((s) => s.workflows);
 
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+  const inputTypeOptions = [
+    { value: 'textInput',        label: 'Text' },
+    { value: 'imageInput',       label: 'Image' },
+    { value: 'audioInput',       label: 'Audio' },
+    { value: 'spreadsheetInput', label: 'Tabular' },
+  ];
+
+  const trainedModels = workflows.flatMap((w) => w.trainedModels);
+
+  const pretrainedByInput: Record<string, { value: string; label: string }[]> = {
+    textInput:        EMBEDDING_MODELS,
+    imageInput:       [...IMAGE_CLASSIFIER_MODELS, ...OBJECT_DETECT_MODELS],
+    audioInput:       AUDIO_MODELS,
+    spreadsheetInput: [],
+  };
+
+  const pretrainedModels = pretrainedByInput[p.inputType as string] ?? [];
+
+  const allOptions = [
+    { value: '', label: '— Select model —' },
+    ...(trainedModels.length > 0 ? trainedModels.map((m) => ({ value: m, label: `✓ ${m}` })) : []),
+    ...pretrainedModels.map((m) => ({ value: m.value, label: `↓ ${m.label}` })),
+  ];
 
   return (
     <div className="space-y-4">
       <SelectField
-        label="Sub-Agent Model"
-        value={params.subAgentModel}
-        options={modelOptions}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentModel: v })}
+        label="Input Type"
+        value={p.inputType as string}
+        options={inputTypeOptions}
+        onChange={(v) => update(node.id, { inputType: v, modelName: '' })}
       />
-      <TextField
-        label="Sub-Agent Prompt"
-        value={params.subAgentPrompt}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentPrompt: v })}
-        placeholder="Enter the prompt for the sub-agent..."
-        multiline
+      <SelectField
+        label="Model"
+        value={p.modelName as string}
+        options={allOptions}
+        onChange={(v) => update(node.id, { modelName: v })}
       />
+      {trainedModels.length === 0 && (
+        <p className="text-xs text-gray-600 italic px-1">
+          No trained models yet — run a training workflow first, or select a pretrained model above.
+        </p>
+      )}
+      <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+        <Info className="w-4 h-4 text-[#6366f1] mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-gray-400">
+          ✓ = your trained models · ↓ = pretrained backbones (no prior training needed)
+        </p>
+      </div>
     </div>
   );
 };
 
-const ChunkingOptimizationForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
+const LLMNodeForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const isOllama = (p.provider as string)?.startsWith('ollama');
+  const isCustom  = p.provider === 'ollama_custom';
 
   return (
     <div className="space-y-4">
-      <CheckboxField
-        label="Enable Auto-Optimization"
-        checked={params.enableAutoOptimization}
-        onChange={(v) => updateNodeParameters(selectedNode.id, { enableAutoOptimization: v })}
+      <SelectField
+        label="Provider"
+        value={p.provider as string}
+        options={LLM_PROVIDERS}
+        onChange={(v) => update(node.id, { provider: v })}
       />
-      <div className="space-y-2">
-        <label className="text-xs text-gray-400 uppercase tracking-wide">Test Strategies</label>
-        <div className="space-y-2">
-          {chunkingStrategyOptions.map((strategy) => (
-            <CheckboxField
-              key={strategy.value}
-              label={strategy.label}
-              checked={(params.testStrategies || []).includes(strategy.value)}
-              onChange={(checked) => {
-                const current = params.testStrategies || [];
-                const updated = checked
-                  ? [...current, strategy.value]
-                  : current.filter((s: string) => s !== strategy.value);
-                updateNodeParameters(selectedNode.id, { testStrategies: updated });
-              }}
-            />
-          ))}
+      {isCustom && (
+        <TextField
+          label="Model Name"
+          value={p.model as string}
+          onChange={(v) => update(node.id, { model: v })}
+          placeholder="e.g., llama3.2"
+        />
+      )}
+      {isOllama && (
+        <TextField
+          label="Ollama URL"
+          value={p.ollamaUrl as string}
+          onChange={(v) => update(node.id, { ollamaUrl: v })}
+          placeholder="http://localhost:11434"
+        />
+      )}
+      <TextField
+        label="System Prompt"
+        value={p.systemPrompt as string}
+        onChange={(v) => update(node.id, { systemPrompt: v })}
+        placeholder="Describe the model output in plain language."
+        multiline
+      />
+      <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+        <Info className="w-4 h-4 text-[#ec4899] mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-gray-400">
+          The LLM receives raw model output as context and returns a natural language description.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const DeployOutputNodeForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  const { id: workflowId } = useParams<{ id: string }>();
+  const [copied, setCopied] = useState(false);
+
+  const endpointUrl = `${WORKER_BASE}/api/deploy/${workflowId ?? ':workflowId'}`;
+  const curlSnippet = `curl -X POST ${endpointUrl} \\\n  -F "file=@/path/to/input"`;
+
+  const copyToClipboard = async () => {
+    await navigator.clipboard.writeText(curlSnippet);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <label className="text-xs text-gray-400 uppercase tracking-wide">Endpoint URL</label>
+        <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
+          <Globe className="w-4 h-4 text-[#14b8a6] shrink-0" />
+          <span className="text-xs text-gray-300 font-mono break-all flex-1">{endpointUrl}</span>
         </div>
       </div>
-    </div>
-  );
-};
-
-const HyperparamTuningForm: React.FC = () => {
-  const selectedNode = useWorkflowStore((state) => state.selectedNode);
-  const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
-
-  if (!selectedNode) return null;
-  const params = selectedNode.data.parameters;
-
-  return (
-    <div className="space-y-4">
-      <div className="space-y-3">
-        <label className="text-xs text-gray-400 uppercase tracking-wide">Search Methods</label>
-        <CheckboxField
-          label="Grid Search"
-          checked={params.enableGridSearch}
-          onChange={(v) => updateNodeParameters(selectedNode.id, { enableGridSearch: v })}
-        />
-        <CheckboxField
-          label="Random Search"
-          checked={params.enableRandomSearch}
-          onChange={(v) => updateNodeParameters(selectedNode.id, { enableRandomSearch: v })}
-        />
-        <CheckboxField
-          label="Bayesian Optimization"
-          checked={params.enableBayesian}
-          onChange={(v) => updateNodeParameters(selectedNode.id, { enableBayesian: v })}
-        />
+      <SelectField
+        label="Response Format"
+        value={p.format as string}
+        options={[
+          { value: 'json', label: 'JSON' },
+          { value: 'text', label: 'Plain Text' },
+        ]}
+        onChange={(v) => update(node.id, { format: v })}
+      />
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-gray-400 uppercase tracking-wide">cURL Example</label>
+          <button
+            onClick={copyToClipboard}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-200 transition-colors"
+          >
+            {copied
+              ? <CheckCircle className="w-3.5 h-3.5 text-[#22c55e]" />
+              : <Copy className="w-3.5 h-3.5" />
+            }
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+        <pre className="bg-[#0a0a0f] border border-[#2a2a38] rounded-md p-3 text-xs text-gray-300 font-mono overflow-x-auto whitespace-pre-wrap">
+          {curlSnippet}
+        </pre>
       </div>
     </div>
   );
 };
 
-// Form selector based on node type
+const SaveModelForm: React.FC = () => (
+  <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+    <CheckCircle className="w-4 h-4 text-[#ef4444] mt-0.5 flex-shrink-0" />
+    <p className="text-xs text-gray-400">
+      All trained models produced by this workflow will be persisted to Cloudflare R2 storage and
+      the Modal Volume.
+    </p>
+  </div>
+);
+
+// ── Form selector ─────────────────────────────────────────────────────────────
+
 const getFormComponent = (type: NodeType): React.FC | null => {
-  switch (type) {
-    case 'textRetrieval':
-      return TextRetrievalForm;
-    case 'agenticLLM':
-      return AgenticLLMForm;
-    case 'visualData':
-      return VisualDataForm;
-    case 'audioData':
-      return AudioDataForm;
-    case 'voiceInput':
-      return VoiceInputForm;
-    case 'agentTool':
-      return AgentToolForm;
-    case 'rlhf':
-      return RLHFForm;
-    case 'rlaif':
-      return RLAIFForm;
-    case 'subAgent':
-      return SubAgentForm;
-    case 'chunkingOptimization':
-      return ChunkingOptimizationForm;
-    case 'hyperparamTuning':
-      return HyperparamTuningForm;
-    case 'output':
-      return null;
-    default:
-      return null;
-  }
+  const map: Partial<Record<NodeType, React.FC>> = {
+    textInput: TextInputForm,
+    imageInput: ImageInputForm,
+    audioInput: AudioInputForm,
+    spreadsheetInput: SpreadsheetInputForm,
+    chunkNode: ChunkNodeForm,
+    embeddingModel: EmbeddingModelForm,
+    imageClassifier: ImageClassifierForm,
+    imageCNN: ImageCNNForm,
+    imageCAE: ImageCAEForm,
+    objectDetector: ObjectDetectorForm,
+    audioSpeechModel: AudioSpeechModelForm,
+    audioCNN: AudioCNNForm,
+    tabularModel: TabularModelForm,
+    saveModel: SaveModelForm,
+    deployModelNode: DeployModelNodeForm,
+    llmNode: LLMNodeForm,
+    deployOutputNode: DeployOutputNodeForm,
+  };
+  return map[type] ?? null;
 };
+
+// ── Panel ─────────────────────────────────────────────────────────────────────
 
 export const PropertiesPanel: React.FC = () => {
   const selectedNode = useWorkflowStore((state) => state.selectedNode);
@@ -836,7 +1298,10 @@ export const PropertiesPanel: React.FC = () => {
               {Icon && (
                 <div
                   className="p-2 rounded-lg"
-                  style={{ backgroundColor: definition?.color + '20', color: definition?.color }}
+                  style={{
+                    backgroundColor: definition?.color + '20',
+                    color: definition?.color,
+                  }}
                 >
                   <Icon className="w-5 h-5" />
                 </div>
@@ -850,8 +1315,8 @@ export const PropertiesPanel: React.FC = () => {
             {/* Form */}
             {FormComponent && <FormComponent />}
 
-            {/* Delete button (not for output node) */}
-            {selectedNode.data.type !== 'output' && (
+            {/* Delete button — not for saveModel */}
+            {selectedNode.data.type !== 'saveModel' && (
               <div className="pt-4 border-t border-[#22222e]">
                 <button
                   onClick={handleDelete}

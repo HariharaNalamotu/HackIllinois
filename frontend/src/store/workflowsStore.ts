@@ -7,8 +7,10 @@ import { Edge } from '@xyflow/react';
 export interface Workflow {
   id: string;
   name: string;
+  type: 'training' | 'deployment';
   nodes: WorkflowNode[];
   edges: Edge[];
+  trainedModels: string[];   // output model names saved by this workflow
   createdAt: number;
   updatedAt: number;
 }
@@ -17,15 +19,13 @@ interface WorkflowsState {
   workflows: Workflow[];
   currentWorkflowId: string | null;
 
-  // Actions
-  createWorkflow: (name: string) => string;
+  createWorkflow: (name: string, type: 'training' | 'deployment') => string;
   deleteWorkflow: (id: string) => void;
   renameWorkflow: (id: string, name: string) => void;
   setCurrentWorkflow: (id: string | null) => void;
   getCurrentWorkflow: () => Workflow | null;
   updateWorkflow: (id: string, nodes: WorkflowNode[], edges: Edge[]) => void;
-
-  // Helpers
+  addTrainedModel: (workflowId: string, modelName: string) => void;
   getWorkflowInputTypes: (workflowId: string) => InputNodeType[];
 }
 
@@ -35,14 +35,16 @@ export const useWorkflowsStore = create<WorkflowsState>()(
       workflows: [],
       currentWorkflowId: null,
 
-      createWorkflow: (name) => {
+      createWorkflow: (name, type) => {
         const id = uuidv4();
         const now = Date.now();
         const newWorkflow: Workflow = {
           id,
           name,
+          type,
           nodes: [],
           edges: [],
+          trainedModels: [],
           createdAt: now,
           updatedAt: now,
         };
@@ -85,18 +87,25 @@ export const useWorkflowsStore = create<WorkflowsState>()(
         }));
       },
 
+      addTrainedModel: (workflowId, modelName) => {
+        set((state) => ({
+          workflows: state.workflows.map((w) =>
+            w.id === workflowId
+              ? { ...w, trainedModels: [...new Set([...w.trainedModels, modelName])] }
+              : w
+          ),
+        }));
+      },
+
       getWorkflowInputTypes: (workflowId) => {
         const workflow = get().workflows.find((w) => w.id === workflowId);
         if (!workflow) return [];
-
-        const inputTypes: InputNodeType[] = ['textRetrieval', 'agenticLLM', 'visualData', 'audioData', 'voiceInput'];
+        const inputTypes: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'];
         return workflow.nodes
           .filter((node) => inputTypes.includes(node.data.type as InputNodeType))
           .map((node) => node.data.type as InputNodeType);
       },
     }),
-    {
-      name: 'ml-workflows-storage',
-    }
+    { name: 'ml-workflows-storage' }
   )
 );
