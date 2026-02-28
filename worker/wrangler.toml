@@ -1,0 +1,40 @@
+name = "hackillinois-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── R2 bucket — model weights ──────────────────────────────────────────────────
+# Create: wrangler r2 bucket create hackillinois-models
+[[r2_buckets]]
+binding = "R2_MODELS"
+bucket_name = "hackillinois-models"
+
+# ── KV namespace — workflow specs + job metadata ───────────────────────────────
+# Create: wrangler kv namespace create JOB_KV
+# Paste the returned id below.
+[[kv_namespaces]]
+binding = "JOB_KV"
+id = "REPLACE_WITH_KV_ID"
+
+# ── Vars (non-secret) ──────────────────────────────────────────────────────────
+# After `modal deploy modal/app.py`, Modal prints each endpoint URL like:
+#   https://harihara--hackillinois-pipeline--train.modal.run
+# Set MODAL_BASE to the common prefix (everything before the --<label> part):
+#   https://harihara--hackillinois-pipeline
+[vars]
+MODAL_BASE      = "https://REPLACE_WITH_WORKSPACE--hackillinois-pipeline"
+ACTIAN_HTTP_URL = "https://actian-http-gate.harihara-nalamotu.workers.dev"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000,https://hackillinois-api.harihara-nalamotu.workers.dev"
+
+# ── Secrets (set via: wrangler secret put <NAME>) ────────────────────────────
+# MODAL_SECRET          shared auth token (also set in Modal hackillinois-secrets)
+# R2_ACCESS_KEY_ID      Cloudflare R2 API token — used by Modal to upload weights
+# R2_SECRET_ACCESS_KEY  Cloudflare R2 API token secret
+# R2_ENDPOINT_URL       https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+
+# ── Local dev ─────────────────────────────────────────────────────────────────
+[env.dev]
+[env.dev.vars]
+MODAL_BASE      = "https://REPLACE_WITH_WORKSPACE--hackillinois-pipeline"
+ACTIAN_HTTP_URL = "https://actian-http-gate.harihara-nalamotu.workers.dev"
+ALLOWED_ORIGINS = "*"
