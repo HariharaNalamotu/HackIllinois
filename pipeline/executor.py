@@ -53,6 +53,7 @@ def execute_pipeline(
     models_dir: str,
     actian_url: str,
     r2_config: dict | None = None,
+    workflow_id: str = "",
 ) -> dict[str, Any]:
     """
     Execute a validated PipelineSpec.
@@ -88,6 +89,7 @@ def execute_pipeline(
     with tempfile.TemporaryDirectory() as workspace:
         ctx: dict[str, Any] = {
             "job_id":        job_id,
+            "workflow_id":   workflow_id,
             "workspace":     workspace,
             "models_dir":    models_dir,
             "actian_url":    actian_url,

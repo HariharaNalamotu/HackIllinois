@@ -370,6 +370,7 @@ app.post("/api/workflow/:id/train", async (c) => {
   const fd         = await c.req.formData();
 
   fd.set("job_id",      jobId);
+  fd.set("workflow_id", workflowId);
   fd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
   fd.set("r2_key_id",   c.env.R2_ACCESS_KEY_ID     || "");
   fd.set("r2_secret",   c.env.R2_SECRET_ACCESS_KEY || "");
@@ -504,6 +505,7 @@ app.post("/api/deploy/:workflowId", async (c) => {
   // Build multipart form with uploaded data + pipeline spec
   const fd = new FormData();
   if (deploymentSpec) fd.set("pipeline_spec", deploymentSpec);
+  fd.set("workflow_id", workflowId);
   fd.set("actian_url", c.env.ACTIAN_HTTP_URL || "");
   fd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
   fd.set("r2_key_id",   c.env.R2_ACCESS_KEY_ID     || "");

@@ -107,12 +107,13 @@ def _log(job_id: str, msg: str, done: bool = False) -> None:
     secrets=[modal.Secret.from_name("hackillinois-secrets")],
 )
 def _gpu_train(
-    job_id:     str,
-    spec_dict:  dict,
-    files:      dict,       # node_id → list of base64 strings
-    file_names: dict,       # node_id → list of file names
-    r2_config:  dict,
-    actian_url: str,
+    job_id:      str,
+    spec_dict:   dict,
+    files:       dict,       # node_id → list of base64 strings
+    file_names:  dict,       # node_id → list of file names
+    r2_config:   dict,
+    actian_url:  str,
+    workflow_id: str = "",
 ) -> dict:
     """Execute a training pipeline on GPU. Called by the /train endpoint."""
     sys.path.insert(0, "/app")
@@ -138,6 +139,7 @@ def _gpu_train(
             models_dir=str(MODELS_DIR),
             actian_url=actian_url,
             r2_config=r2_config,
+            workflow_id=workflow_id,
         )
         models_volume.commit()
         _job_store[job_id] = {"status": "complete", "result": result}
@@ -273,6 +275,8 @@ async def train_endpoint(request: Request):
             files_b64.setdefault(node_id, []).append(base64.b64encode(data).decode())
             file_names.setdefault(node_id, []).append(value.filename or "upload")
 
+    workflow_id = str(form.get("workflow_id") or "")
+
     # Spawn GPU function
     call = _gpu_train.with_options(gpu=gpu_spec).spawn(
         job_id=job_id,
@@ -281,6 +285,7 @@ async def train_endpoint(request: Request):
         file_names=file_names,
         r2_config=r2_config,
         actian_url=actian_url,
+        workflow_id=workflow_id,
     )
 
     _job_store[job_id] = {"status": "running", "modal_call_id": call.object_id}
@@ -314,10 +319,11 @@ async def infer_endpoint(request: Request):
     except Exception as e:
         return {"error": f"Invalid pipeline JSON: {e}"}, 400
 
-    actian_url = str(form.get("actian_url") or
-                     os.environ.get("ACTIAN_HTTP_URL",
-                                    "https://actian-http-gate.harihara-nalamotu.workers.dev"))
-    job_id = str(uuid.uuid4())
+    actian_url  = str(form.get("actian_url") or
+                      os.environ.get("ACTIAN_HTTP_URL",
+                                     "https://actian-http-gate.harihara-nalamotu.workers.dev"))
+    workflow_id = str(form.get("workflow_id") or "")
+    job_id      = str(uuid.uuid4())
 
     files_raw:  dict[str, list[bytes]] = {}
     file_names: dict[str, list[str]]   = {}
@@ -339,6 +345,7 @@ async def infer_endpoint(request: Request):
         log_fn=lambda m: logs.append(m),
         models_dir=str(MODELS_DIR),
         actian_url=actian_url,
+        workflow_id=workflow_id,
     )
     return {**result, "job_id": job_id, "logs": logs}
 

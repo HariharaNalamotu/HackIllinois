@@ -201,8 +201,9 @@ class TextModelNode(BaseNode):
         model_path   = _save_to_volume(output_dir, output_name, models_dir, log)
         _upload_to_r2(output_dir, f"models/{output_name}", ctx["r2_config"], log)
 
-        # Upload embeddings to Actian
-        collection = f"{output_name}_embeddings"
+        # Upload embeddings to Actian — namespace by workflow so collections are isolated
+        wf_prefix  = ctx.get("workflow_id") or "global"
+        collection = f"{wf_prefix}_{output_name}_embeddings"
         vectors_uploaded = 0
         if ctx.get("actian_url"):
             try:
@@ -236,7 +237,9 @@ class TextModelNode(BaseNode):
         query_texts = inp.get("chunks") or inp.get("texts", [])
         base_model  = self.p("base_model", "all-MiniLM-L6-v2")
         top_k       = int(self.p("top_k", 5))
-        collection  = self.p("collection", f"{base_model}_embeddings")
+        output_name = self.p("output_name", base_model)
+        wf_prefix   = ctx.get("workflow_id") or "global"
+        collection  = self.p("collection") or f"{wf_prefix}_{output_name}_embeddings"
 
         model_path = os.path.join(ctx["models_dir"], base_model)
         if not os.path.exists(model_path):
