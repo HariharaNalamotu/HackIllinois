@@ -277,8 +277,8 @@ async def train_endpoint(request: Request):
 
     workflow_id = str(form.get("workflow_id") or "")
 
-    # Spawn GPU function
-    call = _gpu_train.with_options(gpu=gpu_spec).spawn(
+    # Spawn GPU function (Modal 1.x: with_options removed; GPU is fixed in decorator)
+    call = _gpu_train.spawn(
         job_id=job_id,
         spec_dict=spec_dict,
         files=files_b64,
@@ -288,10 +288,11 @@ async def train_endpoint(request: Request):
         workflow_id=workflow_id,
     )
 
-    _job_store[job_id] = {"status": "running", "modal_call_id": call.object_id}
-    _log_store[job_id] = [{"ts": time.time(), "msg": f"Job {job_id} queued on {gpu_spec}"}]
+    modal_call_id = getattr(call, "object_id", getattr(call, "function_call_id", job_id))
+    _job_store[job_id] = {"status": "running", "modal_call_id": modal_call_id}
+    _log_store[job_id] = [{"ts": time.time(), "msg": f"Job {job_id} queued on A10G GPU"}]
 
-    return {"job_id": job_id, "status": "running", "gpu": gpu_spec}
+    return {"job_id": job_id, "status": "running", "gpu": "A10G"}
 
 
 # ── /infer — run inference pipeline (CPU, synchronous) ───────────────────────

@@ -157,6 +157,7 @@ function EditorHeader({
   const edges = useWorkflowStore((state) => state.edges);
   const getInputNodeTypes = useWorkflowStore((state) => state.getInputNodeTypes);
   const [showSettings, setShowSettings] = useState(false);
+  const [showTrainingModal, setShowTrainingModal] = useState(false);
   const [trainingJobId, setTrainingJobId] = useState<string | null>(null);
   const [trainError, setTrainError] = useState<string | null>(null);
 
@@ -186,7 +187,10 @@ function EditorHeader({
 
   const handleTrainModel = async () => {
     if (trainDisabled) return;
+    // Open the modal immediately so the user sees feedback right away
     setTrainError(null);
+    setTrainingJobId(null);
+    setShowTrainingModal(true);
     try {
       const pipelineSpec = buildPipelineSpec(nodes, edges, 'train');
       const files = collectFiles(nodes);
@@ -219,20 +223,6 @@ function EditorHeader({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {trainError && (
-            <div
-              className="relative group cursor-pointer"
-              onClick={() => {
-                console.error('[Training error]', trainError);
-                alert(trainError);
-              }}
-            >
-              <span className="text-xs text-red-400 max-w-64 truncate block" title={trainError}>
-                ⚠ {trainError}
-              </span>
-            </div>
-          )}
-
           <button
             onClick={() => setShowSettings(true)}
             className="p-2 hover:bg-[#1a1a24] rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
@@ -277,11 +267,16 @@ function EditorHeader({
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
-      {trainingJobId && (
+      {showTrainingModal && (
         <TrainingModal
           jobId={trainingJobId}
+          submitError={trainError}
           workflowId={workflowId}
-          onClose={() => setTrainingJobId(null)}
+          onClose={() => {
+            setShowTrainingModal(false);
+            setTrainingJobId(null);
+            setTrainError(null);
+          }}
         />
       )}
     </>

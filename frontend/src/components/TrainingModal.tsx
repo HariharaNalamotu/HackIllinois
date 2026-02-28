@@ -4,23 +4,25 @@ import { pollJobStatus, streamJobLogs } from '../services/api';
 import { useWorkflowsStore } from '../store/workflowsStore';
 
 interface Props {
-  jobId: string;
+  jobId: string | null;      // null = still submitting
+  submitError: string | null; // set when submission itself failed
   workflowId: string;
   onClose: () => void;
 }
 
 type Phase = 'submitting' | 'running' | 'done' | 'error';
 
-export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) => {
-  const [phase, setPhase]       = useState<Phase>('submitting');
-  const [logs, setLogs]         = useState<string[]>([]);
-  const [elapsed, setElapsed]   = useState(0);
+export const TrainingModal: React.FC<Props> = ({ jobId, submitError, workflowId, onClose }) => {
+  const [phase, setPhase]         = useState<Phase>('submitting');
+  const [logs, setLogs]           = useState<string[]>([]);
+  const [elapsed, setElapsed]     = useState(0);
   const [modelName, setModelName] = useState<string>('');
-  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [errorMsg, setErrorMsg]   = useState<string>('');
 
   const addTrainedModel = useWorkflowsStore((s) => s.addTrainedModel);
   const logEndRef       = useRef<HTMLDivElement>(null);
   const startRef        = useRef<number>(Date.now());
+  const cleanupRef      = useRef<(() => void) | null>(null);
 
   // Elapsed timer
   useEffect(() => {
@@ -33,8 +35,18 @@ export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) =
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // Start streaming + polling
+  // Handle submission error
   useEffect(() => {
+    if (submitError) {
+      setErrorMsg(submitError);
+      setPhase('error');
+    }
+  }, [submitError]);
+
+  // Once we have a job_id, start streaming + polling
+  useEffect(() => {
+    if (!jobId) return;
+
     setPhase('running');
 
     const cleanup = streamJobLogs(
@@ -48,6 +60,7 @@ export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) =
         setPhase('done');
       }
     );
+    cleanupRef.current = cleanup;
 
     // Fallback polling every 5s in case SSE doesn't fire
     const pollId = setInterval(async () => {
@@ -75,17 +88,19 @@ export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) =
   }, [jobId]);
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const canClose = phase === 'done' || phase === 'error';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
       <div className="w-full max-w-2xl bg-[#12121a] rounded-xl border border-[#22222e] shadow-2xl flex flex-col overflow-hidden">
+
         {/* Header */}
         <div className="flex items-center gap-3 px-6 py-4 border-b border-[#22222e]">
-          {phase === 'running' || phase === 'submitting'
-            ? <Loader2 className="w-5 h-5 text-[#00d4ff] animate-spin" />
+          {phase === 'submitting' || phase === 'running'
+            ? <Loader2 className="w-5 h-5 text-[#00d4ff] animate-spin shrink-0" />
             : phase === 'done'
-            ? <CheckCircle className="w-5 h-5 text-[#22c55e]" />
-            : <XCircle className="w-5 h-5 text-[#ef4444]" />
+            ? <CheckCircle className="w-5 h-5 text-[#22c55e] shrink-0" />
+            : <XCircle className="w-5 h-5 text-[#ef4444] shrink-0" />
           }
           <h2 className="text-gray-200 font-semibold flex-1">
             {phase === 'submitting' && 'Submitting training job…'}
@@ -97,17 +112,26 @@ export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) =
             <Zap className="w-4 h-4" />
             <span>{fmt(elapsed)}</span>
           </div>
-          {(phase === 'done' || phase === 'error') && (
-            <button onClick={onClose} className="p-1 hover:bg-[#1a1a24] rounded-lg text-gray-400">
+          {canClose && (
+            <button onClick={onClose} className="p-1 hover:bg-[#1a1a24] rounded-lg text-gray-400 ml-2">
               <X className="w-4 h-4" />
             </button>
           )}
         </div>
 
         {/* Log pane */}
-        <div className="flex-1 p-4 overflow-y-auto h-80 bg-[#0a0a0f] font-mono text-xs text-gray-300 space-y-0.5">
-          {logs.length === 0 && phase !== 'done' && phase !== 'error' && (
-            <span className="text-gray-500">Waiting for GPU container to start…</span>
+        <div className="h-80 p-4 overflow-y-auto bg-[#0a0a0f] font-mono text-xs text-gray-300 space-y-0.5">
+          {phase === 'submitting' && (
+            <div className="flex items-center gap-2 text-gray-500">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>Sending pipeline to Modal GPU…</span>
+            </div>
+          )}
+          {phase === 'running' && logs.length === 0 && (
+            <div className="flex items-center gap-2 text-gray-500">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>Waiting for GPU container to start…</span>
+            </div>
           )}
           {logs.map((line, i) => (
             <div key={i} className="whitespace-pre-wrap leading-5">{line}</div>
@@ -120,8 +144,10 @@ export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) =
           {phase === 'done' && (
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[#22c55e] font-medium">Model saved: <span className="font-mono">{modelName}</span></p>
-                <p className="text-gray-500 text-sm mt-0.5">Available in your training workflow's model list</p>
+                <p className="text-[#22c55e] font-medium">
+                  Model saved: <span className="font-mono">{modelName}</span>
+                </p>
+                <p className="text-gray-500 text-sm mt-0.5">Available in your workflow's model list</p>
               </div>
               <button
                 onClick={onClose}
@@ -132,19 +158,19 @@ export const TrainingModal: React.FC<Props> = ({ jobId, workflowId, onClose }) =
             </div>
           )}
           {phase === 'error' && (
-            <div className="flex items-center justify-between">
-              <p className="text-[#ef4444] text-sm">{errorMsg || 'An error occurred during training.'}</p>
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-[#ef4444] text-sm break-all">{errorMsg || 'An error occurred during training.'}</p>
               <button
                 onClick={onClose}
-                className="px-4 py-2 bg-[#1a1a24] text-gray-300 rounded-lg hover:bg-[#22222e] transition-colors"
+                className="px-4 py-2 bg-[#1a1a24] text-gray-300 rounded-lg hover:bg-[#22222e] transition-colors shrink-0"
               >
                 Close
               </button>
             </div>
           )}
-          {(phase === 'running' || phase === 'submitting') && (
+          {(phase === 'submitting' || phase === 'running') && (
             <p className="text-gray-500 text-sm">
-              Training is running on a Modal GPU. This window can be left open to stream logs.
+              Training is running on a Modal A10G GPU — do not close this tab.
             </p>
           )}
         </div>
