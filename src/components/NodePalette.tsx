@@ -120,11 +120,18 @@ export const NodePalette: React.FC = () => {
 
   // Check if an optimization node is enabled based on active input nodes
   const isOptimizationEnabled = (node: NodeDefinition): boolean => {
+    if (node.requiresAnyInputNode) {
+      return node.requiresAnyInputNode.some((t) => activeInputNodes.includes(t));
+    }
     if (!node.requiresInputNode) return true;
     return activeInputNodes.includes(node.requiresInputNode);
   };
 
   const getDisabledReason = (node: NodeDefinition): string => {
+    if (node.requiresAnyInputNode) {
+      const labels = node.requiresAnyInputNode.map(getInputNodeLabel).join(' or ');
+      return `Add a ${labels} node to enable this`;
+    }
     if (!node.requiresInputNode) return '';
     return `Add a "${getInputNodeLabel(node.requiresInputNode)}" node to enable this`;
   };

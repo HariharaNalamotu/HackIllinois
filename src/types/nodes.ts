@@ -23,6 +23,7 @@ export interface NodeDefinition {
   category: 'input' | 'optimization' | 'output';
   color: string;
   requiresInputNode?: InputNodeType; // Which input node enables this optimization
+  requiresAnyInputNode?: InputNodeType[]; // Enabled when ANY of these input nodes are present
 }
 
 export const nodeDefinitions: NodeDefinition[] = [
@@ -117,14 +118,15 @@ export const nodeDefinitions: NodeDefinition[] = [
     requiresInputNode: 'textRetrieval',
   },
 
-  // ============ HYPERPARAMETER TUNING (UNIVERSAL) ============
+  // ============ HYPERPARAMETER TUNING (TRADITIONAL ML ONLY) ============
   {
     type: 'hyperparamTuning',
     label: 'Hyperparameter Tuning',
-    description: 'Automated hyperparameter optimization for any model',
+    description: 'Automated hyperparameter optimization for traditional ML models',
     icon: SlidersHorizontal,
     category: 'optimization',
     color: '#c084fc',
+    requiresAnyInputNode: ['visualData', 'audioData'],
   },
 
   // ============ OUTPUT NODE ============

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useEffect } from 'react';
+import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ReactFlow,
@@ -11,13 +11,14 @@ import {
   SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Play, Settings } from 'lucide-react';
 
 import { NodePalette } from '../components/NodePalette';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { WorkflowNode } from '../components/WorkflowNode';
-import { useWorkflowStore, NodeType } from '../store/workflowStore';
+import { useWorkflowStore, NodeType, InputNodeType } from '../store/workflowStore';
 import { useWorkflowsStore } from '../store/workflowsStore';
+import { SettingsModal } from '../components/SettingsModal';
 
 const nodeTypes = {
   workflowNode: WorkflowNode,
@@ -71,6 +72,14 @@ function WorkflowCanvas() {
     [removeNode]
   );
 
+  // Double-click on an edge to delete it
+  const onEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: any) => {
+      onEdgesChange([{ id: edge.id, type: 'remove' }]);
+    },
+    [onEdgesChange]
+  );
+
   return (
     <div ref={reactFlowWrapper} className="flex-1 h-full">
       <ReactFlow
@@ -83,6 +92,7 @@ function WorkflowCanvas() {
         onDrop={onDrop}
         onPaneClick={onPaneClick}
         onNodeDoubleClick={onNodeDoubleClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
         nodeTypes={nodeTypes}
         fitView
         snapToGrid
@@ -138,45 +148,103 @@ function WorkflowCanvas() {
   );
 }
 
-function EditorHeader({ workflowName }: { workflowName: string }) {
+function EditorHeader({ workflowName, workflowId }: { workflowName: string; workflowId: string }) {
   const navigate = useNavigate();
   const nodes = useWorkflowStore((state) => state.nodes);
   const edges = useWorkflowStore((state) => state.edges);
+  const getInputNodeTypes = useWorkflowStore((state) => state.getInputNodeTypes);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const activeInputNodes = getInputNodeTypes();
+
+  // Training nodes: RLHF, RLAIF, hyperparamTuning
+  const trainingNodeTypes = ['rlhf', 'rlaif', 'hyperparamTuning'];
+  const hasTrainingNodes = nodes.some((n) => trainingNodeTypes.includes(n.data.type));
+
+  // LLM input nodes present
+  const llmInputTypes: InputNodeType[] = ['agenticLLM', 'textRetrieval'];
+  const hasLLMNodes = activeInputNodes.some((t) => llmInputTypes.includes(t));
+
+  // ML-only workflows (only visualData/audioData, no LLM nodes) need training first
+  const mlOnlyInputTypes: InputNodeType[] = ['visualData', 'audioData', 'voiceInput'];
+  const hasOnlyMLNodes = activeInputNodes.length > 0 && activeInputNodes.every((t) => mlOnlyInputTypes.includes(t));
+
+  const trainDisabled = !hasTrainingNodes;
+  const executeDisabled = hasOnlyMLNodes || activeInputNodes.length === 0;
 
   const handleTrainModel = () => {
-    alert('Training would start here. This is a demo - in production, this would initiate the ML training pipeline.');
+    if (trainDisabled) return;
+    alert('Training would start here. In production, this would initiate the ML training pipeline.');
+  };
+
+  const handleExecute = () => {
+    if (executeDisabled) return;
+    navigate(`/test/${workflowId}`);
   };
 
   return (
-    <header className="h-12 bg-[#12121a] border-b border-[#22222e] flex items-center px-4 gap-4">
-      <button
-        onClick={() => navigate('/')}
-        className="p-2 hover:bg-[#1a1a24] rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
-      >
-        <ArrowLeft className="w-5 h-5" />
-      </button>
-      <div className="flex items-center gap-2">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <circle cx="8" cy="8" r="3" stroke="#00d4ff" strokeWidth="1.5" />
-          <circle cx="16" cy="16" r="3" stroke="#00d4ff" strokeWidth="1.5" />
-          <path d="M10.5 9.5L13.5 14.5" stroke="#00d4ff" strokeWidth="1.5" />
-        </svg>
-        <h1 className="text-gray-200 font-semibold">{workflowName}</h1>
-      </div>
-      <div className="text-gray-500 text-sm">
-        {nodes.length} node{nodes.length !== 1 ? 's' : ''} · {edges.length} connection{edges.length !== 1 ? 's' : ''}
-      </div>
-
-      {/* Train Model Button */}
-      <div className="ml-auto">
+    <>
+      <header className="h-12 bg-[#12121a] border-b border-[#22222e] flex items-center px-4 gap-4">
         <button
-          onClick={handleTrainModel}
-          className="flex items-center gap-2 px-4 py-2 bg-[#22c55e] text-[#0a0a0f] rounded-lg font-medium hover:bg-[#16a34a] transition-colors"
+          onClick={() => navigate('/')}
+          className="p-2 hover:bg-[#1a1a24] rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
         >
-          Train Model
+          <ArrowLeft className="w-5 h-5" />
         </button>
-      </div>
-    </header>
+        <div className="flex items-center gap-2">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <circle cx="8" cy="8" r="3" stroke="#00d4ff" strokeWidth="1.5" />
+            <circle cx="16" cy="16" r="3" stroke="#00d4ff" strokeWidth="1.5" />
+            <path d="M10.5 9.5L13.5 14.5" stroke="#00d4ff" strokeWidth="1.5" />
+          </svg>
+          <h1 className="text-gray-200 font-semibold">{workflowName}</h1>
+        </div>
+        <div className="text-gray-500 text-sm">
+          {nodes.length} node{nodes.length !== 1 ? 's' : ''} · {edges.length} connection{edges.length !== 1 ? 's' : ''}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* Settings Button */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 hover:bg-[#1a1a24] rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+
+          {/* Train Model Button */}
+          <button
+            onClick={handleTrainModel}
+            disabled={trainDisabled}
+            title={trainDisabled ? 'Add RLHF, RLAIF, or Hyperparameter Tuning nodes to enable training' : 'Train Model'}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              trainDisabled
+                ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
+                : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
+            }`}
+          >
+            Train Model
+          </button>
+
+          {/* Execute Button */}
+          <button
+            onClick={handleExecute}
+            disabled={executeDisabled}
+            title={executeDisabled ? (activeInputNodes.length === 0 ? 'Add input nodes first' : 'ML-only workflows need training first') : 'Execute Inference'}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              executeDisabled
+                ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
+                : 'bg-[#00d4ff] text-[#0a0a0f] hover:bg-[#00b8d4]'
+            }`}
+          >
+            <Play className="w-4 h-4" />
+            Execute
+          </button>
+        </div>
+      </header>
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+    </>
   );
 }
 
@@ -234,7 +302,7 @@ function EditorContent({ workflowId }: { workflowId: string }) {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#0a0a0f]">
-      <EditorHeader workflowName={workflow.name} />
+      <EditorHeader workflowName={workflow.name} workflowId={workflowId} />
       <div className="flex-1 flex overflow-hidden">
         <NodePalette />
         <WorkflowCanvas />

@@ -1,22 +1,165 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, Image, Mic, FileAudio, X } from 'lucide-react';
+import { ArrowLeft, Send, Image, Mic, FileAudio, X, ThumbsUp, ThumbsDown, ChevronDown, ChevronRight, Bot } from 'lucide-react';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { InputNodeType } from '../store/workflowStore';
+import { chatStream, submitFeedback, RLAIFScore, ChatMessage, WorkflowConfig } from '../services/api';
+
+interface SubAgentStep {
+  agent: string;
+  content: string;
+}
+
+interface ToolCallInfo {
+  name: string;
+  arguments: string;
+}
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  rlaifScore?: RLAIFScore;
+  feedbackGiven?: 'up' | 'down';
+  toolCalls?: ToolCallInfo[];
+  subAgentSteps?: SubAgentStep[];
 }
 
+// Quality badge color based on RLAIF overall score
+const getQualityColor = (score: number): string => {
+  if (score >= 8) return '#22c55e'; // green
+  if (score >= 5) return '#fbbf24'; // yellow
+  return '#ef4444'; // red
+};
+
+const getQualityLabel = (score: number): string => {
+  if (score >= 8) return 'High Quality';
+  if (score >= 5) return 'Moderate';
+  return 'Low Quality';
+};
+
+// RLHF Feedback Buttons
+const FeedbackButtons: React.FC<{
+  messageId: string;
+  feedbackGiven?: 'up' | 'down';
+  onFeedback: (messageId: string, rating: 'up' | 'down') => void;
+}> = ({ messageId, feedbackGiven, onFeedback }) => {
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+
+  const handleFeedback = (rating: 'up' | 'down') => {
+    onFeedback(messageId, rating);
+    if (rating === 'down') {
+      setShowTextInput(true);
+    }
+  };
+
+  const handleSubmitText = () => {
+    if (feedbackText.trim()) {
+      submitFeedback({ messageId, rating: feedbackGiven || 'down', feedback: feedbackText });
+      setShowTextInput(false);
+      setFeedbackText('');
+    }
+  };
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => handleFeedback('up')}
+          className={`p-1.5 rounded transition-colors ${
+            feedbackGiven === 'up'
+              ? 'text-green-400 bg-green-400/10'
+              : 'text-gray-600 hover:text-green-400 hover:bg-green-400/10'
+          }`}
+          title="Good response"
+        >
+          <ThumbsUp className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => handleFeedback('down')}
+          className={`p-1.5 rounded transition-colors ${
+            feedbackGiven === 'down'
+              ? 'text-red-400 bg-red-400/10'
+              : 'text-gray-600 hover:text-red-400 hover:bg-red-400/10'
+          }`}
+          title="Bad response"
+        >
+          <ThumbsDown className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {showTextInput && (
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={feedbackText}
+            onChange={(e) => setFeedbackText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSubmitText()}
+            placeholder="What was wrong?"
+            className="flex-1 bg-[#0a0a0f] border border-[#2a2a38] rounded px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-[#00d4ff]"
+          />
+          <button
+            onClick={handleSubmitText}
+            className="px-3 py-1.5 bg-[#2a2a38] rounded text-xs text-gray-300 hover:bg-[#3a3a48]"
+          >
+            Send
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Sub-agent steps collapsible block
+const SubAgentBlock: React.FC<{ steps: SubAgentStep[] }> = ({ steps }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  if (steps.length === 0) return null;
+
+  return (
+    <div className="mt-2 border border-[#2a2a38] rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-400 hover:bg-[#22222e] transition-colors"
+      >
+        <Bot className="w-3.5 h-3.5 text-[#fb923c]" />
+        <span>{steps.length} sub-agent step{steps.length !== 1 ? 's' : ''}</span>
+        {expanded ? <ChevronDown className="w-3.5 h-3.5 ml-auto" /> : <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
+      </button>
+      {expanded && (
+        <div className="border-t border-[#2a2a38] p-3 space-y-2">
+          {steps.map((step, i) => (
+            <div key={i} className="text-xs">
+              <span className="text-[#fb923c] font-medium">{step.agent}:</span>
+              <span className="text-gray-400 ml-2">{step.content}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Chat Interface for Text/Agentic LLM workflows
-const ChatInterface: React.FC = () => {
+const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowConfig }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleFeedback = (messageId: string, rating: 'up' | 'down') => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, feedbackGiven: rating } : m))
+    );
+    submitFeedback({ messageId, rating });
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isStreaming) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -24,18 +167,73 @@ const ChatInterface: React.FC = () => {
       content: input,
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
     setInput('');
+    setIsStreaming(true);
 
-    // Simulate response
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: 'This is a simulated response. In production, this would be connected to your trained model.',
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    }, 1000);
+    const assistantId = (Date.now() + 1).toString();
+    const assistantMessage: Message = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      toolCalls: [],
+      subAgentSteps: [],
+    };
+    setMessages((prev) => [...prev, assistantMessage]);
+
+    const chatMessages: ChatMessage[] = updatedMessages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    await chatStream(chatMessages, workflowConfig, {
+      onToken: (token) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: m.content + token } : m
+          )
+        );
+      },
+      onToolCall: (toolCall) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
+              : m
+          )
+        );
+      },
+      onSubAgent: (step) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, subAgentSteps: [...(m.subAgentSteps || []), step] }
+              : m
+          )
+        );
+      },
+      onRlaifScore: (score) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, rlaifScore: score } : m
+          )
+        );
+      },
+      onDone: () => {
+        setIsStreaming(false);
+      },
+      onError: (error) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: m.content || `Error: ${error}` }
+              : m
+          )
+        );
+        setIsStreaming(false);
+      },
+    });
   };
 
   return (
@@ -53,18 +251,61 @@ const ChatInterface: React.FC = () => {
               key={msg.id}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div
-                className={`max-w-[70%] px-4 py-3 rounded-lg ${
-                  msg.role === 'user'
-                    ? 'bg-[#00d4ff] text-[#0a0a0f]'
-                    : 'bg-[#1a1a24] text-gray-200 border border-[#2a2a38]'
-                }`}
-              >
-                {msg.content}
+              <div className={`max-w-[70%] ${msg.role === 'user' ? '' : ''}`}>
+                <div
+                  className={`px-4 py-3 rounded-lg ${
+                    msg.role === 'user'
+                      ? 'bg-[#00d4ff] text-[#0a0a0f]'
+                      : 'bg-[#1a1a24] text-gray-200 border border-[#2a2a38]'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 whitespace-pre-wrap">{msg.content}</div>
+                    {msg.rlaifScore && (
+                      <div
+                        className="flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                        style={{
+                          backgroundColor: getQualityColor(msg.rlaifScore.overall) + '20',
+                          color: getQualityColor(msg.rlaifScore.overall),
+                        }}
+                        title={`Helpfulness: ${msg.rlaifScore.helpfulness}/10, Accuracy: ${msg.rlaifScore.accuracy}/10, Safety: ${msg.rlaifScore.safety}/10`}
+                      >
+                        {getQualityLabel(msg.rlaifScore.overall)} ({msg.rlaifScore.overall}/10)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tool calls display */}
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {msg.toolCalls.map((tc, i) => (
+                        <div key={i} className="text-xs bg-[#0a0a0f] rounded px-2 py-1 font-mono">
+                          <span className="text-[#ffd700]">{tc.name}</span>
+                          <span className="text-gray-500">({tc.arguments})</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Sub-agent steps */}
+                {msg.subAgentSteps && msg.subAgentSteps.length > 0 && (
+                  <SubAgentBlock steps={msg.subAgentSteps} />
+                )}
+
+                {/* RLHF Feedback */}
+                {msg.role === 'assistant' && msg.content && (
+                  <FeedbackButtons
+                    messageId={msg.id}
+                    feedbackGiven={msg.feedbackGiven}
+                    onFeedback={handleFeedback}
+                  />
+                )}
               </div>
             </div>
           ))
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
@@ -76,11 +317,13 @@ const ChatInterface: React.FC = () => {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             placeholder="Type a message..."
-            className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded-lg px-4 py-3 text-gray-200 focus:outline-none focus:border-[#00d4ff]"
+            disabled={isStreaming}
+            className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded-lg px-4 py-3 text-gray-200 focus:outline-none focus:border-[#00d4ff] disabled:opacity-50"
           />
           <button
             onClick={handleSend}
-            className="px-6 py-3 bg-[#00d4ff] text-[#0a0a0f] rounded-lg font-medium hover:bg-[#00b8d4] transition-colors"
+            disabled={isStreaming}
+            className="px-6 py-3 bg-[#00d4ff] text-[#0a0a0f] rounded-lg font-medium hover:bg-[#00b8d4] transition-colors disabled:opacity-50"
           >
             <Send className="w-5 h-5" />
           </button>
@@ -110,7 +353,6 @@ const VisualInterface: React.FC = () => {
 
   const handleAnalyze = () => {
     if (!selectedFile) return;
-    // Simulate analysis
     setTimeout(() => {
       setResult('Detected: Person (95%), Car (87%), Tree (72%)');
     }, 1500);
@@ -199,7 +441,6 @@ const AudioInterface: React.FC<{ isVoice?: boolean }> = ({ isVoice = false }) =>
 
   const handleAnalyze = () => {
     if (!selectedFile) return;
-    // Simulate analysis
     setTimeout(() => {
       if (isVoice) {
         setResult('Transcription: "Hello, this is a test of the voice recognition system."');
@@ -307,6 +548,12 @@ export const TestPage: React.FC = () => {
     );
   }
 
+  // Build workflow config for API calls
+  const workflowConfig: WorkflowConfig = {
+    nodes: workflow.nodes,
+    edges: workflow.edges,
+  };
+
   // Determine the primary input type
   const inputTypes: InputNodeType[] = ['textRetrieval', 'agenticLLM', 'visualData', 'audioData', 'voiceInput'];
   const workflowInputTypes = workflow.nodes
@@ -314,7 +561,7 @@ export const TestPage: React.FC = () => {
     .map((node) => node.data.type as InputNodeType);
 
   // Prioritize interface based on input types
-  let InterfaceComponent = ChatInterface;
+  let InterfaceComponent: React.FC = () => <ChatInterface workflowConfig={workflowConfig} />;
   let interfaceLabel = 'Chat';
 
   if (workflowInputTypes.includes('visualData')) {
@@ -333,7 +580,7 @@ export const TestPage: React.FC = () => {
       {/* Header */}
       <header className="h-12 bg-[#12121a] border-b border-[#22222e] flex items-center px-4 gap-4">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate(`/editor/${id}`)}
           className="p-2 hover:bg-[#1a1a24] rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
