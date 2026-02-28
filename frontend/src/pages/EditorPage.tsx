@@ -163,9 +163,23 @@ function EditorHeader({
   const activeInputNodes = getInputNodeTypes();
 
   const processingNodeTypes = [
+    // Legacy combined nodes
     'chunkNode', 'embeddingModel',
     'imageClassifier', 'imageCNN', 'imageCAE', 'objectDetector',
     'audioSpeechModel', 'audioCNN', 'tabularModel',
+    // Chunk variants
+    'chunkAuto', 'chunkSentence', 'chunkParagraph', 'chunkSlidingWindow',
+    'chunkFixedSize', 'chunkMarkdown', 'chunkRecursive', 'chunkCode',
+    // Embedding variants
+    'embeddingMiniLM', 'embeddingMPNet', 'embeddingBGESmall', 'embeddingBGEBase', 'embeddingMultilingual',
+    // Image classifier variants
+    'classifierResNet50', 'classifierConvNeXt', 'classifierResNet18',
+    // Object detector variants
+    'detectorYOLOS', 'detectorRTDETR', 'detectorDETR',
+    // Audio speech variants
+    'audioWhisper', 'audioWav2Vec2', 'audioWav2Vec2Emotion',
+    // Tabular variants
+    'tabularLSTM', 'tabularGRU', 'tabularRNN', 'tabularFFNN', 'tabularDNN',
   ];
   const hasProcessingNode = nodes.some((n) => processingNodeTypes.includes(n.data.type));
   const trainDisabled = activeInputNodes.length === 0 || !hasProcessingNode;
