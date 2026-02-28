@@ -220,9 +220,17 @@ function EditorHeader({
 
         <div className="ml-auto flex items-center gap-2">
           {trainError && (
-            <span className="text-xs text-red-400 max-w-48 truncate" title={trainError}>
-              {trainError}
-            </span>
+            <div
+              className="relative group cursor-pointer"
+              onClick={() => {
+                console.error('[Training error]', trainError);
+                alert(trainError);
+              }}
+            >
+              <span className="text-xs text-red-400 max-w-64 truncate block" title={trainError}>
+                ⚠ {trainError}
+              </span>
+            </div>
           )}
 
           <button

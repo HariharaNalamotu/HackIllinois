@@ -363,7 +363,7 @@ function buildTar(entries: Array<{ name: string; data: Uint8Array }>): Uint8Arra
   return out;
 }
 
-// POST /api/workflow/:id/train — accepts {pipeline_spec, files[]} → forwards to Modal /train
+// POST /api/workflow/:id/train — accepts {pipeline, files[<nodeId>]} → forwards to Modal /train
 app.post("/api/workflow/:id/train", async (c) => {
   const workflowId = c.req.param("id");
   const jobId      = crypto.randomUUID();
@@ -382,7 +382,8 @@ app.post("/api/workflow/:id/train", async (c) => {
   });
   if (!resp.ok) {
     const errText = await resp.text();
-    return c.json({ error: `Modal training error: ${errText.slice(0, 400)}` }, 502);
+    console.error(`[train] Modal returned ${resp.status}:`, errText);
+    return c.json({ error: `Modal /train returned ${resp.status}`, detail: errText.slice(0, 800) }, 502);
   }
   let data: Record<string, unknown> = {};
   try { data = (await resp.json()) as Record<string, unknown>; } catch (_) {}

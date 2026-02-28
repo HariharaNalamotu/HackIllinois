@@ -156,9 +156,10 @@ export async function submitTrainingJob(
   files: Array<{ nodeId: string; file: File }>
 ): Promise<{ job_id: string }> {
   const fd = new FormData();
-  fd.set('pipeline_spec', JSON.stringify(pipelineSpec));
+  // Modal's /train endpoint reads the pipeline spec under the key "pipeline"
+  fd.set('pipeline', JSON.stringify(pipelineSpec));
   for (const { nodeId, file } of files) {
-    fd.append('files[]', file, `${nodeId}__${file.name}`);
+    fd.append(`files[${nodeId}]`, file, file.name);
   }
 
   const res = await fetch(`${WORKER_BASE}/api/workflow/${workflowId}/train`, {
@@ -167,7 +168,9 @@ export async function submitTrainingJob(
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Training submission failed: ${err.slice(0, 200)}`);
+    const detail = (() => { try { return JSON.stringify(JSON.parse(err)); } catch { return err; } })();
+    console.error('[submitTrainingJob] failed:', res.status, detail);
+    throw new Error(`Training submission failed (HTTP ${res.status}): ${detail.slice(0, 400)}`);
   }
   return res.json();
 }
