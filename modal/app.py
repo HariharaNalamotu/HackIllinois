@@ -45,18 +45,10 @@ MODELS_DIR    = Path("/vol/models")
 _log_store = modal.Dict.from_name("pipeline-logs", create_if_missing=True)
 _job_store = modal.Dict.from_name("pipeline-jobs", create_if_missing=True)
 
-# Source mounts
-_src_mount = modal.Mount.from_local_file(
-    Path(__file__).parent.parent / "chunk.py", remote_path="/app/chunk.py"
-)
-_generate_mount = modal.Mount.from_local_file(
-    Path(__file__).parent / "generate.py", remote_path="/app/generate.py"
-)
-_pipeline_mount = modal.Mount.from_local_dir(
-    Path(__file__).parent.parent / "pipeline", remote_path="/app/pipeline"
-)
+# ── Container image — bake local source files in (modal.Mount removed in 1.x) ─
+# chunk.py and generate.py are copied to /app/; pipeline/ is added as a package.
+_ROOT = Path(__file__).parent.parent  # repo root
 
-# Container image for all functions
 _image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -85,6 +77,11 @@ _image = (
         'python -c "import nltk; nltk.download(\'punkt\', quiet=True); '
         'nltk.download(\'punkt_tab\', quiet=True)"'
     )
+    # Bake chunk.py and generate.py into /app/ inside the container
+    .add_local_file(_ROOT / "chunk.py",              "/app/chunk.py",      copy=True)
+    .add_local_file(_ROOT / "modal" / "generate.py", "/app/generate.py",   copy=True)
+    # Bake the pipeline/ package so it's importable without sys.path tricks
+    .add_local_python_source("pipeline", copy=True)
 )
 
 GPU_MAP = {"T4": "T4", "A10G": "A10G", "A100": "A100", "H100": "H100"}
@@ -108,7 +105,6 @@ def _log(job_id: str, msg: str, done: bool = False) -> None:
     volumes={str(MODELS_DIR.parent): models_volume},
     timeout=7200,
     secrets=[modal.Secret.from_name("hackillinois-secrets")],
-    mounts=[_src_mount, _generate_mount, _pipeline_mount],
 )
 def _gpu_train(
     job_id:     str,
@@ -165,7 +161,6 @@ def _gpu_train(
     image=_image,
     timeout=120,
     secrets=[modal.Secret.from_name("hackillinois-secrets")],
-    mounts=[_src_mount],
 )
 @modal.web_endpoint(method="POST", label="chunk")
 async def chunk_endpoint(
@@ -223,7 +218,6 @@ async def chunk_endpoint(
     image=_image,
     timeout=120,                           # fast — just spawns the GPU job
     secrets=[modal.Secret.from_name("hackillinois-secrets")],
-    mounts=[_generate_mount, _pipeline_mount],
 )
 @modal.web_endpoint(method="POST", label="train")
 async def train_endpoint(request: Request):
@@ -301,7 +295,6 @@ async def train_endpoint(request: Request):
     volumes={str(MODELS_DIR.parent): models_volume},
     timeout=300,
     secrets=[modal.Secret.from_name("hackillinois-secrets")],
-    mounts=[_src_mount, _generate_mount, _pipeline_mount],
 )
 @modal.web_endpoint(method="POST", label="infer")
 async def infer_endpoint(request: Request):
@@ -476,24 +469,37 @@ async def search_endpoint(request: Request):
 
 
 # ── Seed models into Modal Volume (local entrypoint) ──────────────────────────
+# Build a seed-only image that bakes ./models/ into /local_models inside the
+# container. modal.Mount was removed in Modal 1.x; copy_local_dir() replaces it.
+_LOCAL_MODELS = Path(__file__).parent.parent / "models"
+_seed_image = (
+    _image.add_local_dir(str(_LOCAL_MODELS), "/local_models", copy=True)
+    if _LOCAL_MODELS.exists()
+    else _image
+)
+
+
 @app.function(
-    image=_image,
+    image=_seed_image,
     volumes={str(MODELS_DIR.parent): models_volume},
-    mounts=[modal.Mount.from_local_dir(
-        Path(__file__).parent.parent / "models",
-        remote_path="/local_models",
-    )],
 )
 def _do_seed():
     import shutil
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    src = Path("/local_models")
+    if not src.exists():
+        print("  /local_models not found — nothing to seed.")
+        return []
     copied = []
-    for p in sorted(Path("/local_models").iterdir()):
+    for p in sorted(src.iterdir()):
         dst = MODELS_DIR / p.name
         if dst.exists():
             print(f"  skip: {p.name}")
             continue
-        shutil.copytree(str(p), str(dst))
+        if p.is_dir():
+            shutil.copytree(str(p), str(dst))
+        else:
+            shutil.copy2(str(p), str(dst))
         copied.append(p.name)
         print(f"  seeded: {p.name}")
     models_volume.commit()

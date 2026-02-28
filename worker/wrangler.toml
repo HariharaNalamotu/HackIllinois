@@ -14,7 +14,7 @@ bucket_name = "hackillinois-models"
 # Paste the returned id below.
 [[kv_namespaces]]
 binding = "JOB_KV"
-id = "REPLACE_WITH_KV_ID"
+id = "4f8c67a206484bbcbf0ddf58f2911332"
 
 # ── Vars (non-secret) ──────────────────────────────────────────────────────────
 # After `modal deploy modal/app.py`, Modal prints each endpoint URL like:
@@ -22,9 +22,9 @@ id = "REPLACE_WITH_KV_ID"
 # Set MODAL_BASE to the common prefix (everything before the --<label> part):
 #   https://harihara--hackillinois-pipeline
 [vars]
-MODAL_BASE      = "https://REPLACE_WITH_WORKSPACE--hackillinois-pipeline"
+MODAL_BASE      = "https://hariharanalamotu--hackillinois-pipeline"
 ACTIAN_HTTP_URL = "https://actian-http-gate.harihara-nalamotu.workers.dev"
-ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000,https://hackillinois-api.harihara-nalamotu.workers.dev"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000,https://hackillinois-api.harihara-nalamotu.workers.dev,https://hackillinois-frontend.pages.dev"
 
 # ── Secrets (set via: wrangler secret put <NAME>) ────────────────────────────
 # MODAL_SECRET          shared auth token (also set in Modal hackillinois-secrets)
