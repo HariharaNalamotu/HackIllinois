@@ -8,6 +8,7 @@ import {
   BackgroundVariant,
   ReactFlowProvider,
   useReactFlow,
+  SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft } from 'lucide-react';
@@ -32,6 +33,7 @@ function WorkflowCanvas() {
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
   const onConnect = useWorkflowStore((state) => state.onConnect);
   const addNode = useWorkflowStore((state) => state.addNode);
+  const removeNode = useWorkflowStore((state) => state.removeNode);
   const setSelectedNode = useWorkflowStore((state) => state.setSelectedNode);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -60,6 +62,15 @@ function WorkflowCanvas() {
     setSelectedNode(null);
   }, [setSelectedNode]);
 
+  // Double-click on a node to delete it (but not the output node)
+  const onNodeDoubleClick = useCallback(
+    (_event: React.MouseEvent, node: any) => {
+      if (node.data?.type === 'output') return;
+      removeNode(node.id);
+    },
+    [removeNode]
+  );
+
   return (
     <div ref={reactFlowWrapper} className="flex-1 h-full">
       <ReactFlow
@@ -71,10 +82,16 @@ function WorkflowCanvas() {
         onDragOver={onDragOver}
         onDrop={onDrop}
         onPaneClick={onPaneClick}
+        onNodeDoubleClick={onNodeDoubleClick}
         nodeTypes={nodeTypes}
         fitView
         snapToGrid
         snapGrid={[15, 15]}
+        panOnDrag
+        selectionKeyCode="Shift"
+        multiSelectionKeyCode="Shift"
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
         defaultEdgeOptions={{
           animated: true,
           style: { stroke: '#00d4ff', strokeWidth: 2 },
@@ -105,6 +122,8 @@ function WorkflowCanvas() {
                 return '#22c55e';
               case 'voiceInput':
                 return '#f97316';
+              case 'output':
+                return '#ef4444';
               default:
                 return '#ffd700';
             }
@@ -171,6 +190,8 @@ function EditorContent({ workflowId }: { workflowId: string }) {
   const edges = useWorkflowStore((state) => state.edges);
   const setNodes = useWorkflowStore((state) => state.setNodes);
   const setEdges = useWorkflowStore((state) => state.setEdges);
+  const addNode = useWorkflowStore((state) => state.addNode);
+  const hasNodeOfType = useWorkflowStore((state) => state.hasNodeOfType);
 
   // Load workflow data on mount
   useEffect(() => {
@@ -179,6 +200,13 @@ function EditorContent({ workflowId }: { workflowId: string }) {
       setEdges(workflow.edges);
     }
   }, [workflowId]);
+
+  // Ensure an output node always exists
+  useEffect(() => {
+    if (!hasNodeOfType('output')) {
+      addNode('output', { x: 750, y: 300 });
+    }
+  }, [nodes.length]);
 
   // Save workflow data on changes
   useEffect(() => {

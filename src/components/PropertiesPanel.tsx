@@ -783,10 +783,10 @@ const getFormComponent = (type: NodeType): React.FC | null => {
       return SubAgentForm;
     case 'chunkingOptimization':
       return ChunkingOptimizationForm;
-    case 'visualHyperparamTuning':
-    case 'audioHyperparamTuning':
-    case 'voiceHyperparamTuning':
+    case 'hyperparamTuning':
       return HyperparamTuningForm;
+    case 'output':
+      return null;
     default:
       return null;
   }
@@ -850,16 +850,18 @@ export const PropertiesPanel: React.FC = () => {
             {/* Form */}
             {FormComponent && <FormComponent />}
 
-            {/* Delete button */}
-            <div className="pt-4 border-t border-[#22222e]">
-              <button
-                onClick={handleDelete}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete Node
-              </button>
-            </div>
+            {/* Delete button (not for output node) */}
+            {selectedNode.data.type !== 'output' && (
+              <div className="pt-4 border-t border-[#22222e]">
+                <button
+                  onClick={handleDelete}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Node
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">

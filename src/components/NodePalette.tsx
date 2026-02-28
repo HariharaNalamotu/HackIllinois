@@ -116,6 +116,7 @@ export const NodePalette: React.FC = () => {
 
   const inputNodes = nodeDefinitions.filter((n) => n.category === 'input');
   const optimizationNodes = nodeDefinitions.filter((n) => n.category === 'optimization');
+  // Output node is auto-added, not available in palette
 
   // Check if an optimization node is enabled based on active input nodes
   const isOptimizationEnabled = (node: NodeDefinition): boolean => {

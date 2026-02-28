@@ -1,12 +1,15 @@
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { GripHorizontal } from 'lucide-react';
-import { NodeData, useWorkflowStore } from '../store/workflowStore';
+import { NodeData, useWorkflowStore, InputNodeType, OptimizationNodeType } from '../store/workflowStore';
 import { nodeDefinitions } from '../types/nodes';
 
 type WorkflowNodeProps = NodeProps & {
   data: NodeData;
 };
+
+const inputTypes: InputNodeType[] = ['textRetrieval', 'agenticLLM', 'visualData', 'audioData', 'voiceInput'];
+const optimizationTypes: OptimizationNodeType[] = ['agentTool', 'rlhf', 'rlaif', 'subAgent', 'chunkingOptimization', 'hyperparamTuning'];
 
 const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected }) => {
   const setSelectedNode = useWorkflowStore((state) => state.setSelectedNode);
@@ -15,6 +18,10 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
   const definition = nodeDefinitions.find((n) => n.type === data.type);
   const Icon = definition?.icon;
   const color = definition?.color || '#00d4ff';
+
+  const isInput = inputTypes.includes(data.type as InputNodeType);
+  const isOptimization = optimizationTypes.includes(data.type as OptimizationNodeType);
+  const isOutput = data.type === 'output';
 
   const handleClick = () => {
     const node = nodes.find((n) => n.id === id);
@@ -78,26 +85,58 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
       </div>
 
       {/* Parameters */}
-      <div className="px-3 py-2 space-y-1">
-        {displayParams.map(({ key, value }) => (
-          <div key={key} className="flex justify-between text-xs gap-2">
-            <span className="text-gray-500 whitespace-nowrap">{key}</span>
-            <span className="text-gray-300 font-medium text-right">{value}</span>
-          </div>
-        ))}
-      </div>
+      {displayParams.length > 0 && (
+        <div className="px-3 py-2 space-y-1">
+          {displayParams.map(({ key, value }) => (
+            <div key={key} className="flex justify-between text-xs gap-2">
+              <span className="text-gray-500 whitespace-nowrap">{key}</span>
+              <span className="text-gray-300 font-medium text-right">{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
-      {/* Handles */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!w-3 !h-3 !bg-[#ffd700] !border-2 !border-[#1a1a24]"
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!w-3 !h-3 !bg-[#ffd700] !border-2 !border-[#1a1a24]"
-      />
+      {/* Optimization nodes: only a top source handle */}
+      {isOptimization && (
+        <Handle
+          type="source"
+          position={Position.Top}
+          id="optimization-source"
+          className="!w-3 !h-3 !bg-[#ffd700] !border-2 !border-[#1a1a24]"
+          title="Connect to node"
+        />
+      )}
+
+      {/* Input nodes: right (output source), bottom (optimization target) */}
+      {isInput && (
+        <>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="output-source"
+            className="!w-3 !h-3 !bg-[#22c55e] !border-2 !border-[#1a1a24]"
+            title="Output"
+          />
+          <Handle
+            type="target"
+            position={Position.Bottom}
+            id="optimization-target"
+            className="!w-3 !h-3 !bg-[#ffd700] !border-2 !border-[#1a1a24]"
+            title="Optimization"
+          />
+        </>
+      )}
+
+      {/* Output node: only a left target handle */}
+      {isOutput && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="input-target"
+          className="!w-3 !h-3 !bg-[#ef4444] !border-2 !border-[#1a1a24]"
+          title="Input"
+        />
+      )}
     </div>
   );
 };

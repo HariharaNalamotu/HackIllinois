@@ -12,11 +12,12 @@ export type OptimizationNodeType =
   | 'rlaif'
   | 'subAgent'
   | 'chunkingOptimization'
-  | 'visualHyperparamTuning'
-  | 'audioHyperparamTuning'
-  | 'voiceHyperparamTuning';
+  | 'hyperparamTuning';
 
-export type NodeType = InputNodeType | OptimizationNodeType;
+// Special node types
+export type SpecialNodeType = 'output';
+
+export type NodeType = InputNodeType | OptimizationNodeType | SpecialNodeType;
 
 // Tool parameter type for agent tools
 export interface ToolParameter {
@@ -128,25 +129,17 @@ const getDefaultParameters = (type: NodeType): Record<string, any> => {
         testStrategies: ['recursive', 'semantic', 'sentence'],
       };
 
-    // Optimization nodes for Visual/Audio
-    case 'visualHyperparamTuning':
+    // Optimization node for hyperparameter tuning
+    case 'hyperparamTuning':
       return {
         enableGridSearch: true,
         enableRandomSearch: false,
         enableBayesian: false,
       };
-    case 'audioHyperparamTuning':
-      return {
-        enableGridSearch: true,
-        enableRandomSearch: false,
-        enableBayesian: false,
-      };
-    case 'voiceHyperparamTuning':
-      return {
-        enableGridSearch: true,
-        enableRandomSearch: false,
-        enableBayesian: false,
-      };
+
+    // Output node
+    case 'output':
+      return {};
 
     default:
       return {};
@@ -178,12 +171,10 @@ const getNodeLabel = (type: NodeType): string => {
       return 'Sub-Agent';
     case 'chunkingOptimization':
       return 'Chunking Optimization';
-    case 'visualHyperparamTuning':
+    case 'hyperparamTuning':
       return 'Hyperparameter Tuning';
-    case 'audioHyperparamTuning':
-      return 'Hyperparameter Tuning';
-    case 'voiceHyperparamTuning':
-      return 'Hyperparameter Tuning';
+    case 'output':
+      return 'Output';
 
     default:
       return 'Unknown Node';
@@ -254,6 +245,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   removeNode: (nodeId) => {
+    const state = get();
+    const node = state.nodes.find((n) => n.id === nodeId);
+    // Prevent deleting the output node
+    if (node?.data.type === 'output') return;
     set((state) => ({
       nodes: state.nodes.filter((node) => node.id !== nodeId),
       edges: state.edges.filter(
@@ -268,8 +263,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   onNodesChange: (changes) => {
+    // Filter out remove changes for the output node
+    const state = get();
+    const filteredChanges = changes.filter((change) => {
+      if (change.type === 'remove') {
+        const node = state.nodes.find((n) => n.id === change.id);
+        return node?.data.type !== 'output';
+      }
+      return true;
+    });
     set((state) => ({
-      nodes: applyNodeChanges(changes, state.nodes) as WorkflowNode[],
+      nodes: applyNodeChanges(filteredChanges, state.nodes) as WorkflowNode[],
     }));
   },
 
@@ -280,6 +284,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   onConnect: (connection) => {
+    const state = get();
+    const sourceNode = state.nodes.find((n) => n.id === connection.source);
+    const targetNode = state.nodes.find((n) => n.id === connection.target);
+    if (!sourceNode || !targetNode) return;
+
+    const inputTypes: InputNodeType[] = ['textRetrieval', 'agenticLLM', 'visualData', 'audioData', 'voiceInput'];
+    const sourceIsInput = inputTypes.includes(sourceNode.data.type as InputNodeType);
+    const targetIsInput = inputTypes.includes(targetNode.data.type as InputNodeType);
+
+    const optimizationTypes: OptimizationNodeType[] = ['agentTool', 'rlhf', 'rlaif', 'subAgent', 'chunkingOptimization', 'hyperparamTuning'];
+    const sourceIsOptimization = optimizationTypes.includes(sourceNode.data.type as OptimizationNodeType);
+
+    // Prevent input-to-input connections
+    if (sourceIsInput && targetIsInput) return;
+
+    // Optimization nodes can only connect via their top source to an input node's bottom optimization-target
+    if (sourceIsOptimization && connection.targetHandle !== 'optimization-target') return;
+
     set((state) => ({
       edges: addEdge(
         {

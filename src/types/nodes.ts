@@ -11,6 +11,7 @@ import {
   SplitSquareHorizontal,
   SlidersHorizontal,
   Mic,
+  LogOut,
   LucideIcon
 } from 'lucide-react';
 
@@ -19,7 +20,7 @@ export interface NodeDefinition {
   label: string;
   description: string;
   icon: LucideIcon;
-  category: 'input' | 'optimization';
+  category: 'input' | 'optimization' | 'output';
   color: string;
   requiresInputNode?: InputNodeType; // Which input node enables this optimization
 }
@@ -116,37 +117,24 @@ export const nodeDefinitions: NodeDefinition[] = [
     requiresInputNode: 'textRetrieval',
   },
 
-  // ============ OPTIMIZATION NODES FOR VISUAL DATA ============
+  // ============ HYPERPARAMETER TUNING (UNIVERSAL) ============
   {
-    type: 'visualHyperparamTuning',
+    type: 'hyperparamTuning',
     label: 'Hyperparameter Tuning',
-    description: 'Automated hyperparameter optimization for CV models',
+    description: 'Automated hyperparameter optimization for any model',
     icon: SlidersHorizontal,
     category: 'optimization',
     color: '#c084fc',
-    requiresInputNode: 'visualData',
   },
 
-  // ============ OPTIMIZATION NODES FOR AUDIO DATA ============
+  // ============ OUTPUT NODE ============
   {
-    type: 'audioHyperparamTuning',
-    label: 'Hyperparameter Tuning',
-    description: 'Automated hyperparameter optimization for audio CNN models',
-    icon: SlidersHorizontal,
-    category: 'optimization',
-    color: '#4ade80',
-    requiresInputNode: 'audioData',
-  },
-
-  // ============ OPTIMIZATION NODES FOR VOICE INPUT ============
-  {
-    type: 'voiceHyperparamTuning',
-    label: 'Hyperparameter Tuning',
-    description: 'Automated hyperparameter optimization for voice models',
-    icon: SlidersHorizontal,
-    category: 'optimization',
-    color: '#fb923c',
-    requiresInputNode: 'voiceInput',
+    type: 'output',
+    label: 'Output',
+    description: 'Final output endpoint for the workflow',
+    icon: LogOut,
+    category: 'output',
+    color: '#ef4444',
   },
 ];
 
