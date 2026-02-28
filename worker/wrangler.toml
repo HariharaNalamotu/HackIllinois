@@ -1,0 +1,32 @@
+name = "hackillinois-api"
+main = "src/index.ts"
+compatibility_date = "2024-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── R2 bucket for model weight storage ───────────────────────────────────────
+# Create with: wrangler r2 bucket create hackillinois-models
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "hackillinois-models"
+
+# ── KV namespace for job metadata ─────────────────────────────────────────────
+# Create with: wrangler kv namespace create JOB_KV
+# Then paste the returned id below.
+[[kv_namespaces]]
+binding = "JOB_KV"
+id = "REPLACE_WITH_KV_ID"
+
+# ── Vars (non-secret) ─────────────────────────────────────────────────────────
+# After `modal deploy modal/app.py`, paste the printed URL here.
+[vars]
+MODAL_API_BASE = "https://REPLACE_AFTER_MODAL_DEPLOY.modal.run"
+
+# ── Secrets (set with wrangler secret put <NAME>) ─────────────────────────────
+# wrangler secret put MODAL_SECRET          → shared token between Worker & Modal
+# wrangler secret put R2_ACCESS_KEY_ID      → Cloudflare R2 API token (for Modal side)
+# wrangler secret put R2_SECRET_ACCESS_KEY  → Cloudflare R2 API token secret
+# wrangler secret put R2_ENDPOINT_URL       → https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+
+# ── Local dev overrides ───────────────────────────────────────────────────────
+[env.dev]
+vars = { MODAL_API_BASE = "http://localhost:8000" }

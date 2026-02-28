@@ -6,3 +6,11 @@ __pycache__/
 .env
 corpus/
 corpus_chunks.json
+
+# Generated gRPC stubs (regenerate: python -m grpc_tools.protoc -I proto --python_out=vdss_client --grpc_python_out=vdss_client proto/*.proto)
+vdss_client/*_pb2*.py
+
+# Worker
+worker/node_modules/
+worker/dist/
+worker/.wrangler/

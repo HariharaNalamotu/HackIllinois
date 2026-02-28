@@ -19,6 +19,9 @@ fastar==0.8.0
 filelock==3.24.3
 frozenlist==1.8.0
 fsspec==2026.2.0
+grpcio==1.78.0
+grpcio-reflection==1.78.0
+grpcio-tools==1.78.0
 grpclib==0.4.9
 h11==0.16.0
 h2==4.3.0
