@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 .env
 corpus/
+corpus_chunks.json
