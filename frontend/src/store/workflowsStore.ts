@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { WorkflowNode, InputNodeType } from './workflowStore';
 import { Edge } from '@xyflow/react';
@@ -30,8 +29,7 @@ interface WorkflowsState {
 }
 
 export const useWorkflowsStore = create<WorkflowsState>()(
-  persist(
-    (set, get) => ({
+  (set, get) => ({
       workflows: [],
       currentWorkflowId: null,
 
@@ -105,7 +103,5 @@ export const useWorkflowsStore = create<WorkflowsState>()(
           .filter((node) => inputTypes.includes(node.data.type as InputNodeType))
           .map((node) => node.data.type as InputNodeType);
       },
-    }),
-    { name: 'ml-workflows-storage' }
-  )
+  })
 );
