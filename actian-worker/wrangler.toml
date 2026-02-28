@@ -1,0 +1,16 @@
+name = "actian-http-gate"
+main = "src/index.ts"
+compatibility_date = "2026-02-28"
+
+[[containers]]
+class_name = "Actian"
+image = "registry.cloudflare.com/968fa2deabda8c0c16a7a51fa58620cd/actian-http-gate:v1"
+max_instances = 3
+
+[[durable_objects.bindings]]
+name = "ACTIAN"
+class_name = "Actian"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Actian"]
