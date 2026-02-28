@@ -220,35 +220,25 @@ function EditorHeader({
           </button>
 
           {workflowType === 'training' && (
-            <>
-              <button
-                onClick={handleTrainModel}
-                disabled={trainDisabled}
-                title={
-                  trainDisabled
-                    ? activeInputNodes.length === 0
-                      ? 'Add an input node to enable training'
-                      : 'Add at least one processing node to enable training'
-                    : 'Run Training Pipeline on GPU'
-                }
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                  trainDisabled
-                    ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
-                    : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
-                }`}
-              >
-                <Play className="w-4 h-4" />
-                Run Training
-              </button>
-              <button
-                onClick={() => navigate(`/run/${workflowId}`)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-[#6366f1] text-white hover:bg-[#4f46e5] transition-colors"
-                title="Open interactive inference"
-              >
-                <Zap className="w-4 h-4" />
-                Inference
-              </button>
-            </>
+            <button
+              onClick={handleTrainModel}
+              disabled={trainDisabled}
+              title={
+                trainDisabled
+                  ? activeInputNodes.length === 0
+                    ? 'Add an input node to enable training'
+                    : 'Add at least one processing node to enable training'
+                  : 'Run Training Pipeline on GPU'
+              }
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                trainDisabled
+                  ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
+                  : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
+              }`}
+            >
+              <Play className="w-4 h-4" />
+              Run Training
+            </button>
           )}
 
           {workflowType === 'deployment' && (
@@ -286,8 +276,6 @@ function EditorContent({ workflowId }: { workflowId: string }) {
   const edges = useWorkflowStore((state) => state.edges);
   const setNodes = useWorkflowStore((state) => state.setNodes);
   const setEdges = useWorkflowStore((state) => state.setEdges);
-  const addNode = useWorkflowStore((state) => state.addNode);
-  const hasNodeOfType = useWorkflowStore((state) => state.hasNodeOfType);
 
   // Load workflow data on mount
   useEffect(() => {
@@ -296,13 +284,6 @@ function EditorContent({ workflowId }: { workflowId: string }) {
       setEdges(workflow.edges);
     }
   }, [workflowId]);
-
-  // Ensure a saveModel node always exists
-  useEffect(() => {
-    if (!hasNodeOfType('saveModel')) {
-      addNode('saveModel', { x: 750, y: 300 });
-    }
-  }, [nodes.length]);
 
   // Save workflow data on changes
   useEffect(() => {

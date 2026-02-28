@@ -19,7 +19,40 @@ export type ProcessNodeType =
   | 'audioCNN'         // audio – CNN on spectrograms
   | 'tabularModel'     // spreadsheet
   | 'deployModelNode'  // deployment: pick a trained/pretrained model
-  | 'llmNode';         // deployment: LLM augmentation
+  | 'llmNode'          // deployment: LLM augmentation
+  // Chunk variants
+  | 'chunkAuto'
+  | 'chunkSentence'
+  | 'chunkParagraph'
+  | 'chunkSlidingWindow'
+  | 'chunkFixedSize'
+  | 'chunkMarkdown'
+  | 'chunkRecursive'
+  | 'chunkCode'
+  // Embedding variants
+  | 'embeddingMiniLM'
+  | 'embeddingMPNet'
+  | 'embeddingBGESmall'
+  | 'embeddingBGEBase'
+  | 'embeddingMultilingual'
+  // Image classifier variants
+  | 'classifierResNet50'
+  | 'classifierConvNeXt'
+  | 'classifierResNet18'
+  // Object detector variants
+  | 'detectorYOLOS'
+  | 'detectorRTDETR'
+  | 'detectorDETR'
+  // Audio speech variants
+  | 'audioWhisper'
+  | 'audioWav2Vec2'
+  | 'audioWav2Vec2Emotion'
+  // Tabular model variants
+  | 'tabularLSTM'
+  | 'tabularGRU'
+  | 'tabularRNN'
+  | 'tabularFFNN'
+  | 'tabularDNN';
 
 /** Terminal output node */
 export type OutputNodeType = 'saveModel' | 'deployOutputNode';
@@ -73,8 +106,29 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
 
     case 'chunkNode':
       return { method: 'auto', chunkSize: 512, overlap: 64 };
+
+    // Chunk variants
+    case 'chunkAuto':
+    case 'chunkSentence':
+    case 'chunkParagraph':
+    case 'chunkMarkdown':
+    case 'chunkRecursive':
+    case 'chunkCode':
+      return {};
+    case 'chunkSlidingWindow':
+    case 'chunkFixedSize':
+      return { chunkSize: 512, overlap: 64 };
+
     case 'embeddingModel':
       return { model: 'all-MiniLM-L6-v2', fineTune: false, method: 'simcse', epochs: 3, learningRate: 3e-5, outputName: '' };
+
+    // Embedding variants
+    case 'embeddingMiniLM':
+    case 'embeddingMPNet':
+    case 'embeddingBGESmall':
+    case 'embeddingBGEBase':
+    case 'embeddingMultilingual':
+      return { fineTune: false, method: 'simcse', epochs: 3, learningRate: 3e-5, outputName: '' };
 
     case 'imageClassifier':
       return { baseModel: 'resnet-50', transfer: true, numClasses: 2, epochs: 10, batchSize: 32, learningRate: 1e-3, outputName: '' };
@@ -82,16 +136,46 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
       return { numLayers: 3, filters: '32,64,128', kernelSize: 3, pooling: 'max', numClasses: 2, epochs: 10, batchSize: 32, learningRate: 1e-3, outputName: '' };
     case 'imageCAE':
       return { numLayers: 3, filters: '32,64,128', latentDim: 256, epochs: 20, batchSize: 32, learningRate: 1e-3, outputName: '' };
+
+    // Image classifier variants
+    case 'classifierResNet50':
+    case 'classifierConvNeXt':
+    case 'classifierResNet18':
+      return { transfer: true, numClasses: 2, epochs: 10, batchSize: 32, learningRate: 1e-3, outputName: '' };
+
     case 'objectDetector':
       return { baseModel: 'yolos-tiny', numClasses: 80, epochs: 10, batchSize: 8, learningRate: 5e-5, inputFormat: 'coco', outputName: '' };
+
+    // Object detector variants
+    case 'detectorYOLOS':
+    case 'detectorRTDETR':
+    case 'detectorDETR':
+      return { numClasses: 80, epochs: 10, batchSize: 8, learningRate: 5e-5, inputFormat: 'coco', outputName: '' };
 
     case 'audioSpeechModel':
       return { task: 'transcription', baseModel: 'whisper-tiny', epochs: 5, learningRate: 1e-4, numClasses: 2, outputName: '' };
     case 'audioCNN':
       return { numLayers: 3, filters: '32,64,128', kernelSize: 3, numClasses: 2, sampleRate: 16000, nMels: 80, epochs: 10, batchSize: 32, learningRate: 1e-3, outputName: '' };
 
+    // Audio speech variants
+    case 'audioWhisper':
+      return { epochs: 5, learningRate: 1e-4, outputName: '' };
+    case 'audioWav2Vec2':
+      return { task: 'classification', epochs: 5, learningRate: 1e-4, numClasses: 2, outputName: '' };
+    case 'audioWav2Vec2Emotion':
+      return { epochs: 5, learningRate: 1e-4, numClasses: 7, outputName: '' };
+
     case 'tabularModel':
       return { modelType: 'lstm', targetColumn: '', numLayers: 2, hiddenDim: 128, numEpochs: 20, batchSize: 64, learningRate: 1e-3, bidirectional: false, outputName: '' };
+
+    // Tabular model variants
+    case 'tabularLSTM':
+    case 'tabularGRU':
+    case 'tabularRNN':
+      return { targetColumn: '', numLayers: 2, hiddenDim: 128, numEpochs: 20, batchSize: 64, learningRate: 1e-3, bidirectional: false, outputName: '' };
+    case 'tabularFFNN':
+    case 'tabularDNN':
+      return { targetColumn: '', numLayers: 2, hiddenDim: 128, numEpochs: 20, batchSize: 64, learningRate: 1e-3, outputName: '' };
 
     case 'deployModelNode':
       return { modelName: '', inputType: 'textInput' };
@@ -112,10 +196,12 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
 
 const getNodeLabel = (type: NodeType): string => {
   const labels: Record<NodeType, string> = {
+    // Inputs
     textInput: 'Text Input',
     imageInput: 'Image Input',
     audioInput: 'Audio Input',
     spreadsheetInput: 'Spreadsheet Input',
+    // Legacy process nodes
     chunkNode: 'Chunk',
     embeddingModel: 'Embedding Model',
     imageClassifier: 'Image Classifier',
@@ -127,8 +213,42 @@ const getNodeLabel = (type: NodeType): string => {
     tabularModel: 'Tabular Neural Net',
     deployModelNode: 'Deploy Model',
     llmNode: 'LLM Node',
+    // Outputs
     deployOutputNode: 'Deploy Output',
     saveModel: 'Save Model',
+    // Chunk variants
+    chunkAuto: 'Auto Chunk',
+    chunkSentence: 'Sentence Chunk',
+    chunkParagraph: 'Paragraph Chunk',
+    chunkSlidingWindow: 'Sliding Window',
+    chunkFixedSize: 'Fixed Size Chunk',
+    chunkMarkdown: 'Markdown Chunk',
+    chunkRecursive: 'Recursive Chunk',
+    chunkCode: 'Code Chunk',
+    // Embedding variants
+    embeddingMiniLM: 'MiniLM L6 v2',
+    embeddingMPNet: 'MPNet Base v2',
+    embeddingBGESmall: 'BGE Small EN',
+    embeddingBGEBase: 'BGE Base EN',
+    embeddingMultilingual: 'Multilingual MiniLM',
+    // Image classifier variants
+    classifierResNet50: 'ResNet-50',
+    classifierConvNeXt: 'ConvNeXt Tiny',
+    classifierResNet18: 'ResNet-18',
+    // Object detector variants
+    detectorYOLOS: 'YOLO-S Tiny',
+    detectorRTDETR: 'RT-DETR R18',
+    detectorDETR: 'DETR ResNet-50',
+    // Audio speech variants
+    audioWhisper: 'Whisper Tiny',
+    audioWav2Vec2: 'Wav2Vec2 Base',
+    audioWav2Vec2Emotion: 'Wav2Vec2 Emotion',
+    // Tabular model variants
+    tabularLSTM: 'LSTM',
+    tabularGRU: 'GRU',
+    tabularRNN: 'Vanilla RNN',
+    tabularFFNN: 'FFNN',
+    tabularDNN: 'Deep NN',
   };
   return labels[type] ?? 'Node';
 };
@@ -202,8 +322,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   removeNode: (nodeId) => {
-    const node = get().nodes.find((n) => n.id === nodeId);
-    if (node?.data.type === 'saveModel') return;
     set((s) => ({
       nodes: s.nodes.filter((n) => n.id !== nodeId),
       edges: s.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
@@ -214,15 +332,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setSelectedNode: (node) => set({ selectedNode: node }),
 
   onNodesChange: (changes) => {
-    const state = get();
-    const filtered = changes.filter((c) => {
-      if (c.type === 'remove') {
-        const n = state.nodes.find((node) => node.id === c.id);
-        return n?.data.type !== 'saveModel';
-      }
-      return true;
-    });
-    set((s) => ({ nodes: applyNodeChanges(filtered, s.nodes) as WorkflowNode[] }));
+    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) as WorkflowNode[] }));
   },
 
   onEdgesChange: (changes) => {

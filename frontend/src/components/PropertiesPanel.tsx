@@ -1217,6 +1217,180 @@ const DeployOutputNodeForm: React.FC = () => {
   );
 };
 
+// ── Chunk variant forms ───────────────────────────────────────────────────────
+
+const ChunkSimpleForm: React.FC = () => (
+  <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+    <Info className="w-4 h-4 text-[#2dd4bf] mt-0.5 flex-shrink-0" />
+    <p className="text-xs text-gray-400">
+      This chunking strategy has no configurable parameters. Connect it to an embedding node to use it.
+    </p>
+  </div>
+);
+
+const ChunkSizeForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <NumberField label="Chunk Size (tokens)" value={p.chunkSize as number} onChange={(v) => update(node.id, { chunkSize: v })} min={32} max={4096} />
+      <NumberField label="Overlap (tokens)" value={p.overlap as number} onChange={(v) => update(node.id, { overlap: v })} min={0} max={512} />
+    </div>
+  );
+};
+
+// ── Embedding variant form (shared) ───────────────────────────────────────────
+
+const EmbeddingVariantForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <Toggle label="Fine-tune" checked={p.fineTune as boolean} onChange={(v) => update(node.id, { fineTune: v })} />
+      {!!(p.fineTune) && (
+        <>
+          <SelectField label="Fine-tune Method" value={p.method as string} options={FINE_TUNE_METHODS} onChange={(v) => update(node.id, { method: v })} />
+          <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={100} />
+          <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.1} step={1e-5} />
+        </>
+      )}
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+// ── Image classifier variant form (shared) ────────────────────────────────────
+
+const ImageClassifierVariantForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <Toggle label="Transfer Learning" checked={p.transfer as boolean} onChange={(v) => update(node.id, { transfer: v })} />
+      <Section title="Training" />
+      <NumberField label="Num Classes" value={p.numClasses as number} onChange={(v) => update(node.id, { numClasses: v })} min={2} max={1000} />
+      <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={500} />
+      <NumberField label="Batch Size" value={p.batchSize as number} onChange={(v) => update(node.id, { batchSize: v })} min={1} max={512} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.1} step={1e-5} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+// ── Object detector variant form (shared) ─────────────────────────────────────
+
+const ObjectDetectorVariantForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <SelectField label="Annotation Format" value={p.inputFormat as string} options={BOUNDING_BOX_FORMATS} onChange={(v) => update(node.id, { inputFormat: v })} />
+      <Section title="Training" />
+      <NumberField label="Num Classes" value={p.numClasses as number} onChange={(v) => update(node.id, { numClasses: v })} min={1} max={1000} />
+      <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={500} />
+      <NumberField label="Batch Size" value={p.batchSize as number} onChange={(v) => update(node.id, { batchSize: v })} min={1} max={64} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.01} step={1e-6} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+// ── Audio speech variant forms ────────────────────────────────────────────────
+
+const AudioWhisperForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+        <Info className="w-4 h-4 text-[#22c55e] mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-gray-400">Task: <span className="text-gray-200">Speech-to-Text transcription</span></p>
+      </div>
+      <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={100} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.01} step={1e-6} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+const AudioWav2Vec2Form: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <SelectField label="Task" value={p.task as string} options={AUDIO_TASKS.filter(t => t.value !== 'emotion_recognition')} onChange={(v) => update(node.id, { task: v })} />
+      <NumberField label="Num Classes" value={p.numClasses as number} onChange={(v) => update(node.id, { numClasses: v })} min={2} max={1000} />
+      <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={100} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.01} step={1e-6} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+const AudioWav2Vec2EmotionForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+        <Info className="w-4 h-4 text-[#22c55e] mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-gray-400">Task: <span className="text-gray-200">Emotion Recognition</span> — predicts 7 emotion classes (neutral, happy, sad, angry, fearful, disgust, surprised).</p>
+      </div>
+      <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={100} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.01} step={1e-6} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+// ── Tabular variant forms ─────────────────────────────────────────────────────
+
+const TabularSequentialForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <TextField label="Target Column" value={p.targetColumn as string} onChange={(v) => update(node.id, { targetColumn: v })} placeholder="e.g., label" />
+      <Section title="Architecture" />
+      <NumberField label="Num Layers" value={p.numLayers as number} onChange={(v) => update(node.id, { numLayers: v })} min={1} max={8} />
+      <NumberField label="Hidden Dim" value={p.hiddenDim as number} onChange={(v) => update(node.id, { hiddenDim: v })} min={16} max={2048} />
+      <Toggle label="Bidirectional" checked={p.bidirectional as boolean} onChange={(v) => update(node.id, { bidirectional: v })} />
+      <Section title="Training" />
+      <NumberField label="Epochs" value={p.numEpochs as number} onChange={(v) => update(node.id, { numEpochs: v })} min={1} max={500} />
+      <NumberField label="Batch Size" value={p.batchSize as number} onChange={(v) => update(node.id, { batchSize: v })} min={1} max={512} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.1} step={1e-5} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
+const TabularDenseForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <TextField label="Target Column" value={p.targetColumn as string} onChange={(v) => update(node.id, { targetColumn: v })} placeholder="e.g., label" />
+      <Section title="Architecture" />
+      <NumberField label="Num Layers" value={p.numLayers as number} onChange={(v) => update(node.id, { numLayers: v })} min={1} max={16} />
+      <NumberField label="Hidden Dim" value={p.hiddenDim as number} onChange={(v) => update(node.id, { hiddenDim: v })} min={16} max={4096} />
+      <Section title="Training" />
+      <NumberField label="Epochs" value={p.numEpochs as number} onChange={(v) => update(node.id, { numEpochs: v })} min={1} max={500} />
+      <NumberField label="Batch Size" value={p.batchSize as number} onChange={(v) => update(node.id, { batchSize: v })} min={1} max={512} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.1} step={1e-5} />
+      <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
+    </div>
+  );
+};
+
 const SaveModelForm: React.FC = () => (
   <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
     <CheckCircle className="w-4 h-4 text-[#ef4444] mt-0.5 flex-shrink-0" />
@@ -1231,10 +1405,12 @@ const SaveModelForm: React.FC = () => (
 
 const getFormComponent = (type: NodeType): React.FC | null => {
   const map: Partial<Record<NodeType, React.FC>> = {
+    // Input nodes
     textInput: TextInputForm,
     imageInput: ImageInputForm,
     audioInput: AudioInputForm,
     spreadsheetInput: SpreadsheetInputForm,
+    // Legacy combined nodes
     chunkNode: ChunkNodeForm,
     embeddingModel: EmbeddingModelForm,
     imageClassifier: ImageClassifierForm,
@@ -1244,6 +1420,40 @@ const getFormComponent = (type: NodeType): React.FC | null => {
     audioSpeechModel: AudioSpeechModelForm,
     audioCNN: AudioCNNForm,
     tabularModel: TabularModelForm,
+    // Chunk variants
+    chunkAuto: ChunkSimpleForm,
+    chunkSentence: ChunkSimpleForm,
+    chunkParagraph: ChunkSimpleForm,
+    chunkSlidingWindow: ChunkSizeForm,
+    chunkFixedSize: ChunkSizeForm,
+    chunkMarkdown: ChunkSimpleForm,
+    chunkRecursive: ChunkSimpleForm,
+    chunkCode: ChunkSimpleForm,
+    // Embedding variants
+    embeddingMiniLM: EmbeddingVariantForm,
+    embeddingMPNet: EmbeddingVariantForm,
+    embeddingBGESmall: EmbeddingVariantForm,
+    embeddingBGEBase: EmbeddingVariantForm,
+    embeddingMultilingual: EmbeddingVariantForm,
+    // Image classifier variants
+    classifierResNet50: ImageClassifierVariantForm,
+    classifierConvNeXt: ImageClassifierVariantForm,
+    classifierResNet18: ImageClassifierVariantForm,
+    // Object detector variants
+    detectorYOLOS: ObjectDetectorVariantForm,
+    detectorRTDETR: ObjectDetectorVariantForm,
+    detectorDETR: ObjectDetectorVariantForm,
+    // Audio speech variants
+    audioWhisper: AudioWhisperForm,
+    audioWav2Vec2: AudioWav2Vec2Form,
+    audioWav2Vec2Emotion: AudioWav2Vec2EmotionForm,
+    // Tabular variants
+    tabularLSTM: TabularSequentialForm,
+    tabularGRU: TabularSequentialForm,
+    tabularRNN: TabularSequentialForm,
+    tabularFFNN: TabularDenseForm,
+    tabularDNN: TabularDenseForm,
+    // Output nodes
     saveModel: SaveModelForm,
     deployModelNode: DeployModelNodeForm,
     llmNode: LLMNodeForm,
@@ -1315,18 +1525,16 @@ export const PropertiesPanel: React.FC = () => {
             {/* Form */}
             {FormComponent && <FormComponent />}
 
-            {/* Delete button — not for saveModel */}
-            {selectedNode.data.type !== 'saveModel' && (
-              <div className="pt-4 border-t border-[#22222e]">
-                <button
-                  onClick={handleDelete}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete Node
-                </button>
-              </div>
-            )}
+            {/* Delete button */}
+            <div className="pt-4 border-t border-[#22222e]">
+              <button
+                onClick={handleDelete}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Node
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">

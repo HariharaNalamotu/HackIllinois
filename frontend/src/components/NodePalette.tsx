@@ -5,6 +5,29 @@ import { useWorkflowStore, NodeType, InputNodeType } from '../store/workflowStor
 
 export type WorkflowPaletteMode = 'training' | 'deployment';
 
+// Legacy combined-node types that are replaced by granular variants.
+// We keep them in the store for backward compat but hide them from the palette.
+const LEGACY_HIDDEN = new Set([
+  'chunkNode', 'embeddingModel',
+  'imageClassifier', 'imageCNN', 'imageCAE',
+  'objectDetector',
+  'audioSpeechModel', 'audioCNN',
+  'tabularModel',
+]);
+
+// Node types that count as "model" nodes → unlock the Save Model output node
+const MODEL_NODE_TYPES = new Set([
+  'embeddingMiniLM', 'embeddingMPNet', 'embeddingBGESmall', 'embeddingBGEBase', 'embeddingMultilingual',
+  'classifierResNet50', 'classifierConvNeXt', 'classifierResNet18',
+  'imageCNN', 'imageCAE',
+  'detectorYOLOS', 'detectorRTDETR', 'detectorDETR',
+  'audioWhisper', 'audioWav2Vec2', 'audioWav2Vec2Emotion',
+  'audioCNN',
+  'tabularLSTM', 'tabularGRU', 'tabularRNN', 'tabularFFNN', 'tabularDNN',
+  // Legacy nodes still count
+  'imageClassifier', 'objectDetector', 'audioSpeechModel', 'embeddingModel', 'tabularModel',
+]);
+
 // ── Collapsible category ──────────────────────────────────────────────────────
 
 const Category: React.FC<{
@@ -25,6 +48,14 @@ const Category: React.FC<{
     </div>
   );
 };
+
+// ── Sub-group label ───────────────────────────────────────────────────────────
+
+const SubGroup: React.FC<{ label: string }> = ({ label }) => (
+  <div className="px-3 pt-3 pb-1">
+    <span className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">{label}</span>
+  </div>
+);
 
 // ── Palette node item ─────────────────────────────────────────────────────────
 
@@ -90,22 +121,24 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
 
   const activeInput: InputNodeType | null = getActiveInputType();
 
-  // Detect image format from the imageInput node parameters
   const imageNode = nodes.find((n) => n.data.type === 'imageInput');
   const detectedImageFormat = imageNode
     ? (imageNode.data.parameters.imageFormat as string | undefined) ?? 'unknown'
     : 'unknown';
 
-  const inputNodes      = nodeDefinitions.filter((n) => n.category === 'input');
-  const processingNodes = nodeDefinitions.filter((n) => n.category === 'processing');
-  const outputNodes     = nodeDefinitions.filter((n) => n.category === 'output');
+  const hasModelNode = nodes.some((n) => MODEL_NODE_TYPES.has(n.data.type as string));
+
+  const allDefs = nodeDefinitions.filter((n) => !LEGACY_HIDDEN.has(n.type as string));
+  const inputDefs      = allDefs.filter((n) => n.category === 'input');
+  const processingDefs = allDefs.filter((n) => n.category === 'processing');
+  const outputDefs     = allDefs.filter((n) => n.category === 'output');
 
   // ── Deployment mode ────────────────────────────────────────────────────────
   if (mode === 'deployment') {
-    const deployProcessing = processingNodes.filter(
+    const deployProcessing = processingDefs.filter(
       (n) => n.type === 'deployModelNode' || n.type === 'llmNode'
     );
-    const deployOutput = outputNodes.filter((n) => n.type === 'deployOutputNode');
+    const deployOutput = outputDefs.filter((n) => n.type === 'deployOutputNode');
 
     return (
       <div className="w-72 bg-[#12121a] border-r border-[#22222e] flex flex-col h-full">
@@ -120,7 +153,7 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
                 Delete the active input node to switch type
               </p>
             )}
-            {inputNodes.map((def) => (
+            {inputDefs.map((def) => (
               <PaletteNode
                 key={def.type}
                 definition={def}
@@ -149,18 +182,10 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
 
   // ── Training mode (default) ────────────────────────────────────────────────
 
-  const isInputDisabled = (def: NodeDefinition): boolean => {
-    if (!activeInput) return false;
-    return def.type !== activeInput;
-  };
-
-  const getInputDisabledReason = (_def: NodeDefinition): string => {
-    if (!activeInput) return '';
-    return `Remove the active ${activeInput.replace('Input', '')} input node first`;
-  };
+  const isInputDisabled = (def: NodeDefinition) => !!activeInput && def.type !== activeInput;
+  const getInputReason  = () => activeInput ? `Remove the active ${activeInput.replace('Input', '')} input node first` : '';
 
   const isProcessingEnabled = (def: NodeDefinition): { enabled: boolean; reason: string } => {
-    // Skip deployment-only nodes in training mode
     if (def.type === 'deployModelNode' || def.type === 'llmNode') return { enabled: false, reason: '' };
     if (!activeInput) return { enabled: false, reason: 'Add an input node first' };
     if (def.requiredInput && def.requiredInput !== activeInput)
@@ -177,37 +202,23 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
     return { enabled: true, reason: '' };
   };
 
-  // Filter out deployment-only nodes from training palette
-  const trainingProcessing = processingNodes.filter(
+  const trainingProcessing = processingDefs.filter(
     (n) => n.type !== 'deployModelNode' && n.type !== 'llmNode'
   );
-  const trainingOutput = outputNodes.filter((n) => n.type !== 'deployOutputNode');
+  const trainingOutput = outputDefs.filter((n) => n.type !== 'deployOutputNode');
 
-  const textNodes  = trainingProcessing.filter((n) => n.requiredInput === 'textInput');
-  const imageNodes = trainingProcessing.filter((n) => n.requiredInput === 'imageInput');
-  const audioNodes = trainingProcessing.filter((n) => n.requiredInput === 'audioInput');
-  const tabNodes   = trainingProcessing.filter((n) => n.requiredInput === 'spreadsheetInput');
+  const textChunkNodes     = trainingProcessing.filter((n) => n.requiredInput === 'textInput' && n.type.startsWith('chunk'));
+  const textEmbedNodes     = trainingProcessing.filter((n) => n.requiredInput === 'textInput' && n.type.startsWith('embedding'));
+  const imageClassNodes    = trainingProcessing.filter((n) => n.requiredInput === 'imageInput' && n.requiredImageFormat === 'imagefolder');
+  const imageDetectNodes   = trainingProcessing.filter((n) => n.requiredInput === 'imageInput' && n.requiredImageFormat === 'boundingbox');
+  const audioNodes         = trainingProcessing.filter((n) => n.requiredInput === 'audioInput');
+  const tabularNodes       = trainingProcessing.filter((n) => n.requiredInput === 'spreadsheetInput');
 
-  const renderProcessingGroup = (groupNodes: NodeDefinition[], groupLabel: string) => (
-    <>
-      {groupNodes.length > 0 && activeInput && (
-        <div className="px-3 pt-2 pb-1">
-          <span className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">{groupLabel}</span>
-        </div>
-      )}
-      {groupNodes.map((def) => {
-        const { enabled, reason } = isProcessingEnabled(def);
-        return (
-          <PaletteNode
-            key={def.type}
-            definition={def}
-            disabled={!enabled}
-            disabledReason={reason}
-          />
-        );
-      })}
-    </>
-  );
+  const renderGroup = (groupNodes: NodeDefinition[]) =>
+    groupNodes.map((def) => {
+      const { enabled, reason } = isProcessingEnabled(def);
+      return <PaletteNode key={def.type} definition={def} disabled={!enabled} disabledReason={reason} />;
+    });
 
   return (
     <div className="w-72 bg-[#12121a] border-r border-[#22222e] flex flex-col h-full">
@@ -223,12 +234,12 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
               Delete the active input node to switch type
             </p>
           )}
-          {inputNodes.map((def) => (
+          {inputDefs.map((def) => (
             <PaletteNode
               key={def.type}
               definition={def}
               disabled={isInputDisabled(def)}
-              disabledReason={getInputDisabledReason(def)}
+              disabledReason={getInputReason()}
             />
           ))}
         </Category>
@@ -239,16 +250,56 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
               Add an input node to unlock processing options
             </p>
           )}
-          {renderProcessingGroup(textNodes,  'Text')}
-          {renderProcessingGroup(imageNodes, 'Image')}
-          {renderProcessingGroup(audioNodes, 'Audio')}
-          {renderProcessingGroup(tabNodes,   'Tabular')}
+
+          {(textChunkNodes.length > 0 || textEmbedNodes.length > 0) && (
+            <>
+              {textChunkNodes.length > 0 && <SubGroup label="Text — Chunking" />}
+              {renderGroup(textChunkNodes)}
+              {textEmbedNodes.length > 0 && <SubGroup label="Text — Embeddings" />}
+              {renderGroup(textEmbedNodes)}
+            </>
+          )}
+
+          {imageClassNodes.length > 0 && (
+            <>
+              <SubGroup label="Image — Classifiers" />
+              {renderGroup(imageClassNodes)}
+            </>
+          )}
+
+          {imageDetectNodes.length > 0 && (
+            <>
+              <SubGroup label="Image — Detectors" />
+              {renderGroup(imageDetectNodes)}
+            </>
+          )}
+
+          {audioNodes.length > 0 && (
+            <>
+              <SubGroup label="Audio" />
+              {renderGroup(audioNodes)}
+            </>
+          )}
+
+          {tabularNodes.length > 0 && (
+            <>
+              <SubGroup label="Tabular" />
+              {renderGroup(tabularNodes)}
+            </>
+          )}
         </Category>
 
         <Category title="Output" icon={<Save className="w-4 h-4 text-[#ef4444]" />} defaultOpen>
-          {trainingOutput.map((def) => (
-            <PaletteNode key={def.type} definition={def} />
-          ))}
+          {trainingOutput
+            .filter((def) => def.type !== 'saveModel' || hasModelNode)
+            .map((def) => (
+              <PaletteNode key={def.type} definition={def} />
+            ))}
+          {!hasModelNode && (
+            <p className="text-xs text-gray-600 px-5 py-2 italic">
+              Add a model node to unlock Save Model
+            </p>
+          )}
         </Category>
       </div>
 

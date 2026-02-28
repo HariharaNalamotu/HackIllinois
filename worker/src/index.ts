@@ -249,7 +249,8 @@ app.post("/api/pipeline/train", async (c) => {
     method: "POST", headers: modalHeaders(c.env), body: fd,
   });
 
-  const data = (await resp.json()) as Record<string, unknown>;
+  let data: Record<string, unknown> = {};
+  try { data = (await resp.json()) as Record<string, unknown>; } catch (_) {}
   const returnedId = (data.job_id as string) || jobId;
 
   // Record job in KV for frontend polling
@@ -375,10 +376,15 @@ app.post("/api/workflow/:id/train", async (c) => {
   fd.set("r2_bucket",   "hackillinois-models");
   fd.set("actian_url",  c.env.ACTIAN_HTTP_URL       || "");
 
-  const resp   = await fetch(modalUrl(c.env, "train"), {
+  const resp = await fetch(modalUrl(c.env, "train"), {
     method: "POST", headers: modalHeaders(c.env), body: fd,
   });
-  const data   = (await resp.json()) as Record<string, unknown>;
+  if (!resp.ok) {
+    const errText = await resp.text();
+    return c.json({ error: `Modal training error: ${errText.slice(0, 400)}` }, 502);
+  }
+  let data: Record<string, unknown> = {};
+  try { data = (await resp.json()) as Record<string, unknown>; } catch (_) {}
   const retId  = (data.job_id as string) || jobId;
 
   await c.env.JOB_KV.put(

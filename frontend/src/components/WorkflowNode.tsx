@@ -1,15 +1,14 @@
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { GripHorizontal } from 'lucide-react';
-import { NodeData, useWorkflowStore, InputNodeType, OptimizationNodeType } from '../store/workflowStore';
+import { NodeData, useWorkflowStore, InputNodeType } from '../store/workflowStore';
 import { nodeDefinitions } from '../types/nodes';
 
 type WorkflowNodeProps = NodeProps & {
   data: NodeData;
 };
 
-const inputTypes: InputNodeType[] = ['textRetrieval', 'agenticLLM', 'visualData', 'audioData', 'voiceInput'];
-const optimizationTypes: OptimizationNodeType[] = ['agentTool', 'rlhf', 'rlaif', 'subAgent', 'chunkingOptimization', 'hyperparamTuning'];
+const INPUT_TYPES: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'];
 
 const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected }) => {
   const setSelectedNode = useWorkflowStore((state) => state.setSelectedNode);
@@ -19,46 +18,37 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
   const Icon = definition?.icon;
   const color = definition?.color || '#00d4ff';
 
-  const isInput = inputTypes.includes(data.type as InputNodeType);
-  const isOptimization = optimizationTypes.includes(data.type as OptimizationNodeType);
-  const isOutput = data.type === 'output';
+  const isInput = INPUT_TYPES.includes(data.type as InputNodeType);
+  const isOutput = data.type === 'saveModel';
+  const isProcessing = !isInput && !isOutput;
 
   const handleClick = () => {
     const node = nodes.find((n) => n.id === id);
-    if (node) {
-      setSelectedNode(node);
-    }
+    if (node) setSelectedNode(node);
   };
 
-  // Get all display parameters
+  // Build a compact summary of key parameters to show on the node card
   const getDisplayParams = () => {
     const params = data.parameters;
-    const entries = Object.entries(params);
-    return entries.map(([key, value]) => {
-      // Format the key nicely
-      const formattedKey = key
-        .replace(/([A-Z])/g, ' $1')
-        .replace(/^./, (str) => str.toUpperCase())
-        .trim();
-
-      // Format the value
-      let displayValue = value;
-      if (value === null || value === undefined || value === '') {
-        displayValue = '—';
-      } else if (typeof value === 'boolean') {
-        displayValue = value ? 'Yes' : 'No';
-      } else if (Array.isArray(value)) {
-        displayValue = `${value.length} items`;
-      } else if (typeof value === 'object') {
-        displayValue = 'Configured';
-      } else if (typeof value === 'number') {
-        displayValue = value.toString();
-      } else if (typeof value === 'string' && value.length > 20) {
-        displayValue = value.substring(0, 20) + '...';
-      }
-
-      return { key: formattedKey, value: displayValue };
-    });
+    // Pick the most meaningful params for each node type (skip null/empty/false)
+    const skip = new Set(['uploadedFiles', 'detectedFormat', 'apiUrl', 'outputName']);
+    return Object.entries(params)
+      .filter(([k, v]) => !skip.has(k) && v !== null && v !== '' && v !== false)
+      .slice(0, 4)
+      .map(([key, value]) => {
+        const formattedKey = key
+          .replace(/([A-Z])/g, ' $1')
+          .replace(/^./, (s) => s.toUpperCase())
+          .trim();
+        let displayValue: string;
+        if (typeof value === 'boolean') displayValue = value ? 'Yes' : 'No';
+        else if (Array.isArray(value)) displayValue = `${value.length} items`;
+        else if (typeof value === 'object') displayValue = 'Configured';
+        else if (typeof value === 'number') displayValue = String(value);
+        else if (typeof value === 'string' && value.length > 18) displayValue = value.slice(0, 18) + '…';
+        else displayValue = String(value);
+        return { key: formattedKey, value: displayValue };
+      });
   };
 
   const displayParams = getDisplayParams();
@@ -68,7 +58,7 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
       onClick={handleClick}
       className={`
         min-w-[220px] max-w-[280px] rounded-lg overflow-hidden
-        bg-[#1a1a24] border transition-all duration-200
+        bg-[#1a1a24] border transition-all duration-200 cursor-pointer
         ${selected ? 'border-[#00d4ff] shadow-lg shadow-[#00d4ff]/20' : 'border-[#2a2a38]'}
       `}
     >
@@ -96,45 +86,43 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
         </div>
       )}
 
-      {/* Optimization nodes: only a top source handle */}
-      {isOptimization && (
+      {/* Input nodes: source handle on the right */}
+      {isInput && (
         <Handle
           type="source"
-          position={Position.Top}
-          id="optimization-source"
-          className="!w-3 !h-3 !bg-[#ffd700] !border-2 !border-[#1a1a24]"
-          title="Connect to node"
+          position={Position.Right}
+          id="output"
+          className="!w-3 !h-3 !border-2 !border-[#1a1a24]"
+          style={{ backgroundColor: color }}
         />
       )}
 
-      {/* Input nodes: right (output source), bottom (optimization target) */}
-      {isInput && (
+      {/* Processing nodes: target on left, source on right */}
+      {isProcessing && (
         <>
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="input"
+            className="!w-3 !h-3 !bg-[#2a2a38] !border-2 !border-[#1a1a24]"
+          />
           <Handle
             type="source"
             position={Position.Right}
-            id="output-source"
-            className="!w-3 !h-3 !bg-[#22c55e] !border-2 !border-[#1a1a24]"
-            title="Output"
-          />
-          <Handle
-            type="target"
-            position={Position.Bottom}
-            id="optimization-target"
-            className="!w-3 !h-3 !bg-[#ffd700] !border-2 !border-[#1a1a24]"
-            title="Optimization"
+            id="output"
+            className="!w-3 !h-3 !border-2 !border-[#1a1a24]"
+            style={{ backgroundColor: color }}
           />
         </>
       )}
 
-      {/* Output node: only a left target handle */}
+      {/* Save Model node: only a target handle on the left */}
       {isOutput && (
         <Handle
           type="target"
           position={Position.Left}
-          id="input-target"
+          id="input"
           className="!w-3 !h-3 !bg-[#ef4444] !border-2 !border-[#1a1a24]"
-          title="Input"
         />
       )}
     </div>

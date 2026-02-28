@@ -555,7 +555,7 @@ export const TestPage: React.FC = () => {
   };
 
   // Determine the primary input type
-  const inputTypes: InputNodeType[] = ['textRetrieval', 'agenticLLM', 'visualData', 'audioData', 'voiceInput'];
+  const inputTypes: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'];
   const workflowInputTypes = workflow.nodes
     .filter((node) => inputTypes.includes(node.data.type as InputNodeType))
     .map((node) => node.data.type as InputNodeType);
@@ -564,15 +564,12 @@ export const TestPage: React.FC = () => {
   let InterfaceComponent: React.FC = () => <ChatInterface workflowConfig={workflowConfig} />;
   let interfaceLabel = 'Chat';
 
-  if (workflowInputTypes.includes('visualData')) {
+  if (workflowInputTypes.includes('imageInput')) {
     InterfaceComponent = VisualInterface;
     interfaceLabel = 'Visual Analysis';
-  } else if (workflowInputTypes.includes('audioData')) {
+  } else if (workflowInputTypes.includes('audioInput')) {
     InterfaceComponent = () => <AudioInterface isVoice={false} />;
     interfaceLabel = 'Audio Analysis';
-  } else if (workflowInputTypes.includes('voiceInput')) {
-    InterfaceComponent = () => <AudioInterface isVoice={true} />;
-    interfaceLabel = 'Voice Processing';
   }
 
   return (

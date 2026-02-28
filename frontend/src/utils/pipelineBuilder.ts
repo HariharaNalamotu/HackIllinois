@@ -11,10 +11,12 @@ import type { WorkflowNode } from '../store/workflowStore';
 // ── Node type mapping: frontend → backend ─────────────────────────────────────
 
 const NODE_TYPE_MAP: Record<string, string> = {
+  // Input nodes
   textInput:        'text_input',
   imageInput:       'image_input',
   audioInput:       'audio_input',
   spreadsheetInput: 'spreadsheet_input',
+  // Legacy combined nodes
   chunkNode:        'chunk',
   embeddingModel:   'text_model',
   imageClassifier:  'cnn_model',
@@ -24,6 +26,40 @@ const NODE_TYPE_MAP: Record<string, string> = {
   audioSpeechModel: 'audio_model',
   audioCNN:         'audio_cnn',
   tabularModel:     'tabular_model',
+  // Chunk variants → 'chunk'
+  chunkAuto:          'chunk',
+  chunkSentence:      'chunk',
+  chunkParagraph:     'chunk',
+  chunkSlidingWindow: 'chunk',
+  chunkFixedSize:     'chunk',
+  chunkMarkdown:      'chunk',
+  chunkRecursive:     'chunk',
+  chunkCode:          'chunk',
+  // Embedding variants → 'text_model'
+  embeddingMiniLM:       'text_model',
+  embeddingMPNet:        'text_model',
+  embeddingBGESmall:     'text_model',
+  embeddingBGEBase:      'text_model',
+  embeddingMultilingual: 'text_model',
+  // Image classifier variants → 'cnn_model'
+  classifierResNet50: 'cnn_model',
+  classifierConvNeXt: 'cnn_model',
+  classifierResNet18: 'cnn_model',
+  // Object detector variants → 'object_detect_model'
+  detectorYOLOS: 'object_detect_model',
+  detectorRTDETR: 'object_detect_model',
+  detectorDETR:  'object_detect_model',
+  // Audio speech variants → 'audio_model'
+  audioWhisper:        'audio_model',
+  audioWav2Vec2:       'audio_model',
+  audioWav2Vec2Emotion: 'audio_model',
+  // Tabular model variants → 'tabular_model'
+  tabularLSTM: 'tabular_model',
+  tabularGRU:  'tabular_model',
+  tabularRNN:  'tabular_model',
+  tabularFFNN: 'tabular_model',
+  tabularDNN:  'tabular_model',
+  // Output nodes
   saveModel:        'model_save',
   deployModelNode:  'infer_output',
   llmNode:          'api_output',
@@ -56,11 +92,11 @@ function translateParams(
 
   // Node-type-specific renames / additions
   switch (frontendType) {
+    // ── Legacy combined nodes ────────────────────────────────────────────────
     case 'embeddingModel':
-      // method: frontend stores 'simcse'/'mnrl'/'lora'/'sft'; backend uses same
       if (params.model) out['base_model'] = params.model;
       if (params.fineTune && params.method) out['method'] = params.method;
-      else if (!params.fineTune) out['method'] = 'simcse'; // no fine-tune → simcse pass-through
+      else if (!params.fineTune) out['method'] = 'simcse';
       break;
 
     case 'imageClassifier':
@@ -69,7 +105,7 @@ function translateParams(
       break;
 
     case 'imageCNN':
-      out['base_model'] = 'none'; // from-scratch
+      out['base_model'] = 'none';
       out['num_layers'] = params.numLayers;
       break;
 
@@ -78,8 +114,8 @@ function translateParams(
       break;
 
     case 'objectDetector':
-      out['base_model']    = params.baseModel;
-      out['input_format']  = params.inputFormat;
+      out['base_model']   = params.baseModel;
+      out['input_format'] = params.inputFormat;
       break;
 
     case 'audioSpeechModel':
@@ -88,12 +124,126 @@ function translateParams(
       break;
 
     case 'tabularModel':
-      out['model_type']     = params.modelType;
-      out['target_column']  = params.targetColumn;
-      out['hidden_dim']     = params.hiddenDim;
-      out['num_layers']     = params.numLayers;
-      out['num_epochs']     = params.numEpochs;
-      out['bidirectional']  = params.bidirectional;
+      out['model_type']    = params.modelType;
+      out['target_column'] = params.targetColumn;
+      out['hidden_dim']    = params.hiddenDim;
+      out['num_layers']    = params.numLayers;
+      out['num_epochs']    = params.numEpochs;
+      out['bidirectional'] = params.bidirectional;
+      break;
+
+    // ── Chunk variants ────────────────────────────────────────────────────────
+    case 'chunkAuto':          out['method'] = 'auto'; break;
+    case 'chunkSentence':      out['method'] = 'sentence'; break;
+    case 'chunkParagraph':     out['method'] = 'paragraph'; break;
+    case 'chunkSlidingWindow': out['method'] = 'sliding_window'; break;
+    case 'chunkFixedSize':     out['method'] = 'fixed_size'; break;
+    case 'chunkMarkdown':      out['method'] = 'markdown_headers'; break;
+    case 'chunkRecursive':     out['method'] = 'recursive'; break;
+    case 'chunkCode':          out['method'] = 'code_blocks'; break;
+
+    // ── Embedding variants ────────────────────────────────────────────────────
+    case 'embeddingMiniLM':
+      out['base_model'] = 'all-MiniLM-L6-v2';
+      if (params.fineTune && params.method) out['method'] = params.method;
+      break;
+    case 'embeddingMPNet':
+      out['base_model'] = 'all-mpnet-base-v2';
+      if (params.fineTune && params.method) out['method'] = params.method;
+      break;
+    case 'embeddingBGESmall':
+      out['base_model'] = 'bge-small-en-v1.5';
+      if (params.fineTune && params.method) out['method'] = params.method;
+      break;
+    case 'embeddingBGEBase':
+      out['base_model'] = 'bge-base-en-v1.5';
+      if (params.fineTune && params.method) out['method'] = params.method;
+      break;
+    case 'embeddingMultilingual':
+      out['base_model'] = 'paraphrase-multilingual-MiniLM-L12-v2';
+      if (params.fineTune && params.method) out['method'] = params.method;
+      break;
+
+    // ── Image classifier variants ─────────────────────────────────────────────
+    case 'classifierResNet50':
+      out['base_model'] = 'resnet-50';
+      out['transfer']   = params.transfer !== false;
+      break;
+    case 'classifierConvNeXt':
+      out['base_model'] = 'convnext-tiny';
+      out['transfer']   = params.transfer !== false;
+      break;
+    case 'classifierResNet18':
+      out['base_model'] = 'resnet-18';
+      out['transfer']   = params.transfer !== false;
+      break;
+
+    // ── Object detector variants ──────────────────────────────────────────────
+    case 'detectorYOLOS':
+      out['base_model']   = 'yolos-tiny';
+      out['input_format'] = params.inputFormat ?? 'coco';
+      break;
+    case 'detectorRTDETR':
+      out['base_model']   = 'rtdetr-r18vd';
+      out['input_format'] = params.inputFormat ?? 'coco';
+      break;
+    case 'detectorDETR':
+      out['base_model']   = 'detr-resnet-50';
+      out['input_format'] = params.inputFormat ?? 'coco';
+      break;
+
+    // ── Audio speech variants ─────────────────────────────────────────────────
+    case 'audioWhisper':
+      out['base_model'] = 'whisper-tiny';
+      out['task']       = 'transcription';
+      break;
+    case 'audioWav2Vec2':
+      out['base_model'] = 'wav2vec2-base';
+      out['task']       = params.task ?? 'classification';
+      break;
+    case 'audioWav2Vec2Emotion':
+      out['base_model'] = 'wav2vec2-emotion';
+      out['task']       = 'emotion_recognition';
+      break;
+
+    // ── Tabular model variants ────────────────────────────────────────────────
+    case 'tabularLSTM':
+      out['model_type']    = 'lstm';
+      out['target_column'] = params.targetColumn;
+      out['hidden_dim']    = params.hiddenDim;
+      out['num_layers']    = params.numLayers;
+      out['num_epochs']    = params.numEpochs;
+      out['bidirectional'] = params.bidirectional;
+      break;
+    case 'tabularGRU':
+      out['model_type']    = 'gru';
+      out['target_column'] = params.targetColumn;
+      out['hidden_dim']    = params.hiddenDim;
+      out['num_layers']    = params.numLayers;
+      out['num_epochs']    = params.numEpochs;
+      out['bidirectional'] = params.bidirectional;
+      break;
+    case 'tabularRNN':
+      out['model_type']    = 'rnn';
+      out['target_column'] = params.targetColumn;
+      out['hidden_dim']    = params.hiddenDim;
+      out['num_layers']    = params.numLayers;
+      out['num_epochs']    = params.numEpochs;
+      out['bidirectional'] = params.bidirectional;
+      break;
+    case 'tabularFFNN':
+      out['model_type']    = 'ffnn';
+      out['target_column'] = params.targetColumn;
+      out['hidden_dim']    = params.hiddenDim;
+      out['num_layers']    = params.numLayers;
+      out['num_epochs']    = params.numEpochs;
+      break;
+    case 'tabularDNN':
+      out['model_type']    = 'dnn';
+      out['target_column'] = params.targetColumn;
+      out['hidden_dim']    = params.hiddenDim;
+      out['num_layers']    = params.numLayers;
+      out['num_epochs']    = params.numEpochs;
       break;
   }
 
