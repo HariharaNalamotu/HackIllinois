@@ -22,7 +22,7 @@ id = "4f8c67a206484bbcbf0ddf58f2911332"
 # Set MODAL_BASE to the common prefix (everything before the --<label> part):
 #   https://harihara--hackillinois-pipeline
 [vars]
-MODAL_BASE      = "https://hariharanalamotu--hackillinois-pipeline"
+MODAL_BASE      = "https://hariharanalamotu"
 ACTIAN_HTTP_URL = "https://actian-http-gate.harihara-nalamotu.workers.dev"
 ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000,https://hackillinois-api.harihara-nalamotu.workers.dev,https://hackillinois-frontend.pages.dev"
 
