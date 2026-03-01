@@ -92,15 +92,16 @@ body {
 }
 
 .react-flow__handle {
-  width: 12px !important;
-  height: 12px !important;
+  width: 18px !important;
+  height: 18px !important;
   border-radius: 50% !important;
   background-color: var(--accent-yellow) !important;
   border: 2px solid var(--dark-700) !important;
+  transform: translate(-50%, -50%) !important;
 }
 
 .react-flow__handle:hover {
-  transform: scale(1.2);
+  box-shadow: 0 0 0 4px rgba(255, 215, 0, 0.3);
 }
 
 /* Custom scrollbar */

@@ -245,6 +245,9 @@ function translateParams(
       out['num_layers']    = params.numLayers;
       out['num_epochs']    = params.numEpochs;
       break;
+    case 'saveModel':
+      if (params.modelName) out['model_name'] = params.modelName;
+      break;
   }
 
   return out;

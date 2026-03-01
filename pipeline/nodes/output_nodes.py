@@ -34,7 +34,8 @@ class ModelSaveNode(BaseNode):
             raise ValueError("ModelSaveNode: requires a model input.")
 
         model_path  = inp.get("model_path", "")
-        output_name = inp.get("output_name", Path(model_path).name if model_path else "unknown")
+        user_name   = self.p("model_name", None)
+        output_name = user_name or inp.get("output_name", Path(model_path).name if model_path else "unknown")
         log(f"  [ModelSave] model '{output_name}' at {model_path}")
 
         return {

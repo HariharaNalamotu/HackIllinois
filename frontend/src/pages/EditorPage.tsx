@@ -4,7 +4,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   BackgroundVariant,
   ReactFlowProvider,
   useReactFlow,
@@ -120,23 +119,6 @@ function WorkflowCanvas() {
           showZoom
           showFitView
           showInteractive={false}
-        />
-        <MiniMap
-          nodeColor={(node) => {
-            const type = node.data?.type;
-            switch (type) {
-              case 'textInput':       return '#00d4ff';
-              case 'imageInput':      return '#a855f7';
-              case 'audioInput':      return '#22c55e';
-              case 'spreadsheetInput': return '#f97316';
-              case 'saveModel':       return '#ef4444';
-              default:                return '#ffd700';
-            }
-          }}
-          maskColor="rgba(0, 0, 0, 0.8)"
-          style={{
-            backgroundColor: '#1a1a24',
-          }}
         />
       </ReactFlow>
     </div>

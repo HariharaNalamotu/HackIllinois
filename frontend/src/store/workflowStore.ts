@@ -187,7 +187,7 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
       return { format: 'json' };
 
     case 'saveModel':
-      return {};
+      return { modelName: '' };
 
     default:
       return {};

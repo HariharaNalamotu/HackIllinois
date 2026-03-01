@@ -92,7 +92,7 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
           type="source"
           position={Position.Right}
           id="output"
-          className="!w-3 !h-3 !border-2 !border-[#1a1a24]"
+          className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
           style={{ backgroundColor: color }}
         />
       )}
@@ -104,13 +104,13 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
             type="target"
             position={Position.Left}
             id="input"
-            className="!w-3 !h-3 !bg-[#2a2a38] !border-2 !border-[#1a1a24]"
+            className="!w-[18px] !h-[18px] !bg-[#2a2a38] !border-2 !border-[#1a1a24]"
           />
           <Handle
             type="source"
             position={Position.Right}
             id="output"
-            className="!w-3 !h-3 !border-2 !border-[#1a1a24]"
+            className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
             style={{ backgroundColor: color }}
           />
         </>
@@ -122,7 +122,7 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
           type="target"
           position={Position.Left}
           id="input"
-          className="!w-3 !h-3 !bg-[#ef4444] !border-2 !border-[#1a1a24]"
+          className="!w-[18px] !h-[18px] !bg-[#ef4444] !border-2 !border-[#1a1a24]"
         />
       )}
     </div>

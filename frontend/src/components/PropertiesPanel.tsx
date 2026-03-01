@@ -1084,7 +1084,7 @@ const DeployModelNodeForm: React.FC = () => {
     { value: 'spreadsheetInput', label: 'Tabular' },
   ];
 
-  const trainedModels = workflows.flatMap((w) => w.trainedModels);
+  const customModels = workflows.flatMap((w) => w.trainedModels);
 
   const pretrainedByInput: Record<string, { value: string; label: string }[]> = {
     textInput:        EMBEDDING_MODELS,
@@ -1095,12 +1095,6 @@ const DeployModelNodeForm: React.FC = () => {
 
   const pretrainedModels = pretrainedByInput[p.inputType as string] ?? [];
 
-  const allOptions = [
-    { value: '', label: '— Select model —' },
-    ...(trainedModels.length > 0 ? trainedModels.map((m) => ({ value: m, label: `✓ ${m}` })) : []),
-    ...pretrainedModels.map((m) => ({ value: m.value, label: `↓ ${m.label}` })),
-  ];
-
   return (
     <div className="space-y-4">
       <SelectField
@@ -1109,23 +1103,35 @@ const DeployModelNodeForm: React.FC = () => {
         options={inputTypeOptions}
         onChange={(v) => update(node.id, { inputType: v, modelName: '' })}
       />
-      <SelectField
-        label="Model"
-        value={p.modelName as string}
-        options={allOptions}
-        onChange={(v) => update(node.id, { modelName: v })}
-      />
-      {trainedModels.length === 0 && (
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-gray-400">Model</label>
+        <select
+          value={p.modelName as string}
+          onChange={(e) => update(node.id, { modelName: e.target.value })}
+          className="w-full bg-[#1a1a24] border border-[#2a2a38] text-gray-200 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-[#6366f1]"
+        >
+          <option value="">— Select model —</option>
+          {customModels.length > 0 && (
+            <optgroup label="Custom (your trained models)">
+              {customModels.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </optgroup>
+          )}
+          {pretrainedModels.length > 0 && (
+            <optgroup label="Pre-trained">
+              {pretrainedModels.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </optgroup>
+          )}
+        </select>
+      </div>
+      {customModels.length === 0 && (
         <p className="text-xs text-gray-600 italic px-1">
           No trained models yet — run a training workflow first, or select a pretrained model above.
         </p>
       )}
-      <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
-        <Info className="w-4 h-4 text-[#6366f1] mt-0.5 flex-shrink-0" />
-        <p className="text-xs text-gray-400">
-          ✓ = your trained models · ↓ = pretrained backbones (no prior training needed)
-        </p>
-      </div>
     </div>
   );
 };
@@ -1408,15 +1414,27 @@ const TabularDenseForm: React.FC = () => {
   );
 };
 
-const SaveModelForm: React.FC = () => (
-  <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
-    <CheckCircle className="w-4 h-4 text-[#ef4444] mt-0.5 flex-shrink-0" />
-    <p className="text-xs text-gray-400">
-      All trained models produced by this workflow will be persisted to Cloudflare R2 storage and
-      the Modal Volume.
-    </p>
-  </div>
-);
+const SaveModelForm: React.FC = () => {
+  const node = useWorkflowStore((s) => s.selectedNode)!;
+  const update = useWorkflowStore((s) => s.updateNodeParameters);
+  const p = node.data.parameters;
+  return (
+    <div className="space-y-4">
+      <TextField
+        label="Model Name"
+        value={(p.modelName as string) ?? ''}
+        onChange={(v) => update(node.id, { modelName: v })}
+        placeholder="e.g., my-text-classifier"
+      />
+      <div className="flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md p-3">
+        <CheckCircle className="w-4 h-4 text-[#ef4444] mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-gray-400">
+          The trained model will be saved with this name to Cloudflare R2 and the Modal Volume.
+        </p>
+      </div>
+    </div>
+  );
+};
 
 // ── Form selector ─────────────────────────────────────────────────────────────
 
