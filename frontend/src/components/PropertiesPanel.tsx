@@ -213,6 +213,46 @@ const detectImageFormat = (files: FileList): 'imagefolder' | 'boundingbox' | 'un
   return 'unknown';
 };
 
+// ── Deployment mode: input nodes show a simple message ─────────────────────────
+
+const useIsDeployment = () => {
+  const { id } = useParams<{ id: string }>();
+  const workflows = useWorkflowsStore((s) => s.workflows);
+  const wf = workflows.find((w) => w.id === id);
+  return wf?.type === 'deployment';
+};
+
+const DeploymentInputInfo: React.FC<{ dataType: string }> = ({ dataType }) => (
+  <div className="flex flex-col items-center gap-3 py-6 text-center">
+    <Info className="w-8 h-8 text-[#6366f1] opacity-50" />
+    <p className="text-sm text-gray-400">
+      {dataType} input will be provided at inference time.
+    </p>
+    <p className="text-xs text-gray-600">
+      Click "Test Inference" to submit individual {dataType.toLowerCase()} samples.
+    </p>
+  </div>
+);
+
+const DeploymentReadOnly: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const workflows = useWorkflowsStore((s) => s.workflows);
+  const wf = workflows.find((w) => w.id === id);
+  const fromTraining = !!wf?.sourceTrainingId;
+
+  return (
+    <div className="flex flex-col items-center gap-3 py-6 text-center">
+      <Info className="w-8 h-8 text-gray-600 opacity-50" />
+      <p className="text-sm text-gray-400">
+        {fromTraining ? 'Inherited from training workflow.' : 'Configuration is set.'}
+      </p>
+      <p className="text-xs text-gray-600">
+        This node's configuration is locked.
+      </p>
+    </div>
+  );
+};
+
 // ── Node-specific forms ───────────────────────────────────────────────────────
 
 const TextInputForm: React.FC = () => {
@@ -220,6 +260,9 @@ const TextInputForm: React.FC = () => {
   const update = useWorkflowStore((s) => s.updateNodeParameters);
   const p = node.data.parameters;
   const fileRef = useRef<HTMLInputElement>(null);
+  const isDeployment = useIsDeployment();
+
+  if (isDeployment) return <DeploymentInputInfo dataType="Text" />;
 
   return (
     <div className="space-y-4">
@@ -295,6 +338,7 @@ const ImageInputForm: React.FC = () => {
   const node = useWorkflowStore((s) => s.selectedNode)!;
   const update = useWorkflowStore((s) => s.updateNodeParameters);
   const p = node.data.parameters;
+  const isDeployment = useIsDeployment();
 
   const handleFiles = useCallback(
     (files: FileList) => {
@@ -310,6 +354,8 @@ const ImageInputForm: React.FC = () => {
 
   const fmt = (p.imageFormat as string) || 'unknown';
   const badge = formatBadgeMap[fmt] ?? formatBadgeMap.unknown;
+
+  if (isDeployment) return <DeploymentInputInfo dataType="Image" />;
 
   return (
     <div className="space-y-4">
@@ -384,6 +430,9 @@ const AudioInputForm: React.FC = () => {
   const update = useWorkflowStore((s) => s.updateNodeParameters);
   const p = node.data.parameters;
   const fileRef = useRef<HTMLInputElement>(null);
+  const isDeployment = useIsDeployment();
+
+  if (isDeployment) return <DeploymentInputInfo dataType="Audio" />;
 
   return (
     <div className="space-y-4">
@@ -453,6 +502,9 @@ const SpreadsheetInputForm: React.FC = () => {
   const update = useWorkflowStore((s) => s.updateNodeParameters);
   const p = node.data.parameters;
   const fileRef = useRef<HTMLInputElement>(null);
+  const isDeployment = useIsDeployment();
+
+  if (isDeployment) return <DeploymentInputInfo dataType="Spreadsheet" />;
 
   return (
     <div className="space-y-4">
@@ -1133,30 +1185,35 @@ const LLMNodeForm: React.FC = () => {
   const p = node.data.parameters;
   const isOllama = (p.provider as string)?.startsWith('ollama');
   const isCustom  = p.provider === 'ollama_custom';
+  const isDeployment = useIsDeployment();
 
   return (
     <div className="space-y-4">
-      <SelectField
-        label="Provider"
-        value={p.provider as string}
-        options={LLM_PROVIDERS}
-        onChange={(v) => update(node.id, { provider: v })}
-      />
-      {isCustom && (
-        <TextField
-          label="Model Name"
-          value={p.model as string}
-          onChange={(v) => update(node.id, { model: v })}
-          placeholder="e.g., llama3.2"
-        />
-      )}
-      {isOllama && (
-        <TextField
-          label="Ollama URL"
-          value={p.ollamaUrl as string}
-          onChange={(v) => update(node.id, { ollamaUrl: v })}
-          placeholder="http://localhost:11434"
-        />
+      {!isDeployment && (
+        <>
+          <SelectField
+            label="Provider"
+            value={p.provider as string}
+            options={LLM_PROVIDERS}
+            onChange={(v) => update(node.id, { provider: v })}
+          />
+          {isCustom && (
+            <TextField
+              label="Model Name"
+              value={p.model as string}
+              onChange={(v) => update(node.id, { model: v })}
+              placeholder="e.g., llama3.2"
+            />
+          )}
+          {isOllama && (
+            <TextField
+              label="Ollama URL"
+              value={p.ollamaUrl as string}
+              onChange={(v) => update(node.id, { ollamaUrl: v })}
+              placeholder="http://localhost:11434"
+            />
+          )}
+        </>
       )}
       <TextField
         label="System Prompt"
@@ -1489,6 +1546,7 @@ export const PropertiesPanel: React.FC = () => {
   const selectedNode = useWorkflowStore((state) => state.selectedNode);
   const removeNode = useWorkflowStore((state) => state.removeNode);
   const setSelectedNode = useWorkflowStore((state) => state.setSelectedNode);
+  const isDeployment = useIsDeployment();
 
   const definition = selectedNode
     ? nodeDefinitions.find((n) => n.type === selectedNode.data.type)
@@ -1496,6 +1554,13 @@ export const PropertiesPanel: React.FC = () => {
 
   const FormComponent = selectedNode ? getFormComponent(selectedNode.data.type) : null;
   const Icon = definition?.icon;
+
+  // In deployment mode, only LLM nodes are editable; everything else is read-only
+  const nodeType = selectedNode?.data.type as string | undefined;
+  const isLLMNode = nodeType === 'llmNode';
+  const isInputNode = nodeType && ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'].includes(nodeType);
+  const showForm = !isDeployment || isLLMNode || isInputNode;
+  const canDelete = !isDeployment;
 
   const handleDelete = () => {
     if (selectedNode) {
@@ -1543,19 +1608,27 @@ export const PropertiesPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Form */}
-            {FormComponent && <FormComponent />}
+            {/* Form — deployment nodes are read-only except LLM */}
+            {showForm && FormComponent ? (
+              <FormComponent />
+            ) : isDeployment ? (
+              <DeploymentReadOnly />
+            ) : (
+              FormComponent && <FormComponent />
+            )}
 
-            {/* Delete button */}
-            <div className="pt-4 border-t border-[#22222e]">
-              <button
-                onClick={handleDelete}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete Node
-              </button>
-            </div>
+            {/* Delete button — hidden in deployment mode */}
+            {canDelete && (
+              <div className="pt-4 border-t border-[#22222e]">
+                <button
+                  onClick={handleDelete}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Node
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">

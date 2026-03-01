@@ -239,13 +239,18 @@ export async function downloadModel(modelName: string): Promise<void> {
 export async function runInference(
   workflowId: string,
   inputData: string | File | File[],
-  pipelineSpec?: { pipeline_type: string; nodes: unknown[]; edges: unknown[] }
+  pipelineSpec?: { pipeline_type: string; nodes: unknown[]; edges: unknown[] },
+  llmConfig?: Record<string, unknown>,
 ): Promise<{ result: unknown; llmResponse?: string }> {
   // Always use FormData so we can include pipeline spec alongside input
   const fd = new FormData();
 
   if (pipelineSpec) {
     fd.set('pipeline', JSON.stringify(pipelineSpec));
+  }
+
+  if (llmConfig) {
+    fd.set('llm_config', JSON.stringify(llmConfig));
   }
 
   if (typeof inputData === 'string') {

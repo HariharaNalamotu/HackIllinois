@@ -440,7 +440,20 @@ async def infer_endpoint(request: Request):
         if isinstance(value, UploadFile):
             data = await value.read()
             files_raw.setdefault(node_id, []).append(data)
-            file_names.setdefault(node_id, []).append(value.filename or "upload")
+            file_names.setdefault(node_id, []).append(value.filename or "upload.txt")
+
+    # Fallback: if input_text was sent as a plain string field (not a file),
+    # inject it as a synthetic .txt file for the first input node.
+    input_text = form.get("input_text")
+    if isinstance(input_text, str) and input_text.strip():
+        input_node_id = None
+        for n in spec.nodes:
+            if n.type.endswith("_input"):
+                input_node_id = n.id
+                break
+        if input_node_id and input_node_id not in files_raw:
+            files_raw[input_node_id] = [input_text.encode("utf-8")]
+            file_names[input_node_id] = ["input.txt"]
 
     logs: list[str] = []
     result = execute_pipeline(

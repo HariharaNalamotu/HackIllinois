@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Zap, Copy, CheckCircle } from 'lucide-react';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { runInference } from '../services/api';
-import { buildInferPipelineFromTraining } from '../utils/pipelineBuilder';
+import { buildInferPipelineFromTraining, buildPipelineSpec } from '../utils/pipelineBuilder';
 import type { InputNodeType } from '../store/workflowStore';
 
 import { getStoredBackendUrl } from '../components/SettingsModal';
@@ -202,18 +202,48 @@ export const InferencePage: React.FC = () => {
   const inferWorkflowId = workflow.sourceTrainingId || workflowId;
   const endpointUrl = `${getWorkerBase()}/api/deploy/${inferWorkflowId}`;
 
+  // Extract LLM node config if present (sent to Worker for post-processing)
+  const llmNode = workflow.nodes.find((n) => n.data.type === 'llmNode');
+  const llmConfig = llmNode ? (llmNode.data.parameters as Record<string, unknown>) : undefined;
+
   const submit = async (inputData: string | File | File[]) => {
     setLoading(true);
     setError(null);
     setResult(null);
     setLlmResponse(undefined);
     try {
-      // Build infer pipeline from workflow (same pipeline minus save node)
-      const trainedModel = workflow.trainedModels[workflow.trainedModels.length - 1];
-      if (!trainedModel) throw new Error('No trained model found. Train this workflow first.');
       const edges = workflow.edges || [];
-      const pipelineSpec = buildInferPipelineFromTraining(workflow.nodes, edges, trainedModel);
-      const res = await runInference(inferWorkflowId, inputData, pipelineSpec);
+      const trainedModel = workflow.trainedModels?.[workflow.trainedModels.length - 1];
+
+      let pipelineSpec;
+      if (trainedModel) {
+        // Has a trained model → transform training pipeline for inference
+        pipelineSpec = buildInferPipelineFromTraining(workflow.nodes, edges, trainedModel);
+      } else {
+        // No trained model (standalone deployment) → build simple pass-through pipeline
+        // Filter out llmNode (handled by Worker) and saveModel
+        const pipelineNodes = workflow.nodes.filter(
+          (n) => n.data.type !== 'llmNode' && n.data.type !== 'saveModel'
+        );
+        const excludeIds = new Set(
+          workflow.nodes.filter((n) => n.data.type === 'llmNode' || n.data.type === 'saveModel').map((n) => n.id)
+        );
+        const pipelineEdges = edges.filter((e) => !excludeIds.has(e.source) && !excludeIds.has(e.target));
+        const spec = buildPipelineSpec(pipelineNodes, pipelineEdges, 'infer');
+
+        // Append infer_output if not already present
+        if (!spec.nodes.some((n) => n.type === 'infer_output')) {
+          const hasOutgoing = new Set(spec.edges.map((e) => e.from));
+          const lastNode = spec.nodes.filter((n) => !hasOutgoing.has(n.id)).pop()
+            ?? spec.nodes[spec.nodes.length - 1];
+          const inferOutputId = '__infer_output__';
+          spec.nodes.push({ id: inferOutputId, type: 'infer_output', params: {} });
+          if (lastNode) spec.edges.push({ from: lastNode.id, to: inferOutputId });
+        }
+        pipelineSpec = spec;
+      }
+
+      const res = await runInference(inferWorkflowId, inputData, pipelineSpec, llmConfig);
       setResult(res.result);
       setLlmResponse(res.llmResponse);
     } catch (err: any) {

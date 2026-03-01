@@ -196,6 +196,7 @@ export const HomePage: React.FC = () => {
 
   const [showTrainingInput, setShowTrainingInput]     = useState(false);
   const [showDeploymentInput, setShowDeploymentInput] = useState(false);
+  const [deploymentMode, setDeploymentMode]           = useState<'from-training' | 'from-scratch'>('from-scratch');
   const [trainingName, setTrainingName]               = useState('');
   const [deploymentName, setDeploymentName]           = useState('');
   const [selectedTrainingId, setSelectedTrainingId]    = useState('');
@@ -212,8 +213,13 @@ export const HomePage: React.FC = () => {
   };
 
   const handleCreateDeployment = () => {
-    if (!deploymentName.trim() || !selectedTrainingId) return;
-    const id = createDeploymentFromTraining(deploymentName.trim(), selectedTrainingId);
+    if (!deploymentName.trim()) return;
+    let id: string | null;
+    if (deploymentMode === 'from-training' && selectedTrainingId) {
+      id = createDeploymentFromTraining(deploymentName.trim(), selectedTrainingId);
+    } else {
+      id = createWorkflow(deploymentName.trim(), 'deployment');
+    }
     if (!id) return;
     setDeploymentName(''); setSelectedTrainingId(''); setShowDeploymentInput(false);
     navigate(`/editor/${id}`);
@@ -302,50 +308,73 @@ export const HomePage: React.FC = () => {
             newButton={
               <button
                 onClick={() => { setShowTrainingInput(false); setShowDeploymentInput(true); }}
-                disabled={trainedWorkflows.length === 0}
-                title={trainedWorkflows.length === 0 ? 'Train a model first' : undefined}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                  trainedWorkflows.length === 0
-                    ? 'bg-[#1a1a24] border-[#22222e] text-gray-600 cursor-not-allowed'
-                    : 'bg-[#22c55e18] border-[#22c55e55] text-[#22c55e]'
-                }`}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors bg-[#22c55e18] border-[#22c55e55] text-[#22c55e]"
               >
                 <Plus className="w-4 h-4" />
                 New Deployment
               </button>
             }
             inputRow={showDeploymentInput ? (
-              <div className="flex items-center gap-3 bg-[#12121a] border border-[#22222e] rounded-lg p-3 mb-3 flex-wrap">
-                <select
-                  value={selectedTrainingId}
-                  onChange={(e) => setSelectedTrainingId(e.target.value)}
-                  className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none"
-                >
-                  <option value="">Select training workflow…</option>
-                  {trainedWorkflows.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name} ({w.trainedModels.length} model{w.trainedModels.length !== 1 ? 's' : ''})
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={deploymentName}
-                  onChange={(e) => setDeploymentName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreateDeployment()}
-                  placeholder="Deployment name…"
-                  className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none w-48"
-                />
-                <button
-                  onClick={handleCreateDeployment}
-                  disabled={!selectedTrainingId || !deploymentName.trim()}
-                  className="px-4 py-2 rounded-md font-medium text-sm text-[#0a0a0f] bg-[#22c55e] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Create
-                </button>
-                <button onClick={() => { setShowDeploymentInput(false); setDeploymentName(''); setSelectedTrainingId(''); }} className="px-4 py-2 text-gray-400 hover:text-gray-200 transition-colors text-sm">
-                  Cancel
-                </button>
+              <div className="bg-[#12121a] border border-[#22222e] rounded-lg p-3 mb-3 space-y-3">
+                {/* Mode toggle */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setDeploymentMode('from-scratch'); setSelectedTrainingId(''); }}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      deploymentMode === 'from-scratch'
+                        ? 'bg-[#22c55e]/20 text-[#22c55e] border border-[#22c55e]/40'
+                        : 'bg-[#1a1a24] text-gray-500 border border-[#2a2a38]'
+                    }`}
+                  >
+                    From Scratch
+                  </button>
+                  <button
+                    onClick={() => setDeploymentMode('from-training')}
+                    disabled={trainedWorkflows.length === 0}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      deploymentMode === 'from-training'
+                        ? 'bg-[#22c55e]/20 text-[#22c55e] border border-[#22c55e]/40'
+                        : 'bg-[#1a1a24] text-gray-500 border border-[#2a2a38]'
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                  >
+                    From Training
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {deploymentMode === 'from-training' && (
+                    <select
+                      value={selectedTrainingId}
+                      onChange={(e) => setSelectedTrainingId(e.target.value)}
+                      className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none"
+                    >
+                      <option value="">Select training workflow…</option>
+                      {trainedWorkflows.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name} ({w.trainedModels.length} model{w.trainedModels.length !== 1 ? 's' : ''})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <input
+                    type="text"
+                    value={deploymentName}
+                    onChange={(e) => setDeploymentName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCreateDeployment()}
+                    placeholder="Deployment name…"
+                    autoFocus
+                    className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none w-48"
+                  />
+                  <button
+                    onClick={handleCreateDeployment}
+                    disabled={!deploymentName.trim() || (deploymentMode === 'from-training' && !selectedTrainingId)}
+                    className="px-4 py-2 rounded-md font-medium text-sm text-[#0a0a0f] bg-[#22c55e] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Create
+                  </button>
+                  <button onClick={() => { setShowDeploymentInput(false); setDeploymentName(''); setSelectedTrainingId(''); }} className="px-4 py-2 text-gray-400 hover:text-gray-200 transition-colors text-sm">
+                    Cancel
+                  </button>
+                </div>
               </div>
             ) : undefined}
           />

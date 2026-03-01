@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { ChevronDown, ChevronRight, GripVertical, CircleDot, Settings2, Save } from 'lucide-react';
 import { nodeDefinitions, NodeDefinition } from '../types/nodes';
 import { useWorkflowStore, NodeType, InputNodeType } from '../store/workflowStore';
+import { useWorkflowsStore } from '../store/workflowsStore';
 
 export type WorkflowPaletteMode = 'training' | 'deployment';
 
@@ -134,19 +136,59 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
   const outputDefs     = allDefs.filter((n) => n.category === 'output');
 
   // ── Deployment mode ────────────────────────────────────────────────────────
-  // Deployment workflows auto-import nodes from training. Only show LLM node to optionally add.
+  const { id: workflowId } = useParams<{ id: string }>();
+  const workflows = useWorkflowsStore((s) => s.workflows);
+  const currentWorkflow = workflows.find((w) => w.id === workflowId);
+  const isFromTraining = !!currentWorkflow?.sourceTrainingId;
+
   if (mode === 'deployment') {
-    const deployExtra = processingDefs.filter((n) => n.type === 'llmNode');
+    // From-training: only show LLM add-on (pipeline imported)
+    // From-scratch: show input nodes + LLM node (build your own)
+    if (isFromTraining) {
+      const deployExtra = processingDefs.filter((n) => n.type === 'llmNode');
+      return (
+        <div className="w-72 bg-[#12121a] border-r border-[#22222e] flex flex-col h-full">
+          <div className="p-4 border-b border-[#22222e]">
+            <h2 className="text-[#6366f1] text-sm font-semibold uppercase tracking-wider">Deployment Palette</h2>
+            <p className="text-gray-500 text-xs mt-1">Pipeline imported from training. Optionally add LLM.</p>
+          </div>
+          <div className="flex-1 overflow-y-auto py-4">
+            <Category title="Add-ons" icon={<Settings2 className="w-4 h-4 text-[#6366f1]" />}>
+              {deployExtra.map((def) => (
+                <PaletteNode key={def.type} definition={def} />
+              ))}
+            </Category>
+          </div>
+          <div className="p-4 border-t border-[#22222e]">
+            <p className="text-xs text-gray-500 text-center">Connect nodes by dragging handles</p>
+          </div>
+        </div>
+      );
+    }
+
+    // From-scratch deployment: show input nodes + LLM node
+    const scratchInputDefs = inputDefs;
+    const llmDef = processingDefs.filter((n) => n.type === 'llmNode');
+    const isInputDisabledDeploy = (def: NodeDefinition) => !!activeInput && def.type !== activeInput;
 
     return (
       <div className="w-72 bg-[#12121a] border-r border-[#22222e] flex flex-col h-full">
         <div className="p-4 border-b border-[#22222e]">
-          <h2 className="text-[#6366f1] text-sm font-semibold uppercase tracking-wider">Deployment Palette</h2>
-          <p className="text-gray-500 text-xs mt-1">Pipeline imported from training. Optionally add LLM.</p>
+          <h2 className="text-[#22c55e] text-sm font-semibold uppercase tracking-wider">Deployment Palette</h2>
+          <p className="text-gray-500 text-xs mt-1">Build a standalone deployment pipeline.</p>
         </div>
         <div className="flex-1 overflow-y-auto py-4">
-          <Category title="Add-ons" icon={<Settings2 className="w-4 h-4 text-[#6366f1]" />}>
-            {deployExtra.map((def) => (
+          <Category title="Input" icon={<CircleDot className="w-4 h-4 text-[#00d4ff]" />}>
+            {scratchInputDefs.map((def) => (
+              <PaletteNode
+                key={def.type}
+                definition={def}
+                disabled={isInputDisabledDeploy(def)}
+              />
+            ))}
+          </Category>
+          <Category title="LLM" icon={<Settings2 className="w-4 h-4 text-[#ec4899]" />}>
+            {llmDef.map((def) => (
               <PaletteNode key={def.type} definition={def} />
             ))}
           </Category>

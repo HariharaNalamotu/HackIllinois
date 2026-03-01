@@ -38,7 +38,7 @@ class TextInputNode(BaseNode):
         ctx: dict[str, Any],
         log: Callable[[str], None],
     ) -> NodeOutput:
-        # Prefer pre-fetched chunks (passed directly or from Actian).
+        # 1. Prefer pre-fetched chunks (passed directly or from Actian).
         all_chunk_keys = list(ctx.get("text_chunks", {}).keys())
         log(f"  [TextInput] node {self.id}: text_chunks keys={all_chunk_keys}, files={files}")
         pre_chunks: list[str] = ctx.get("text_chunks", {}).get(self.id, [])
@@ -46,7 +46,7 @@ class TextInputNode(BaseNode):
             log(f"  [TextInput] {len(pre_chunks)} chunks for node {self.id}")
             return {"type": "text", "texts": pre_chunks, "filenames": ["chunks"]}
 
-        # Fallback: read from uploaded files (used when files are sent directly to /train)
+        # 2. Read from uploaded files
         import sys
         sys.path.insert(0, "/app")  # chunk.py is mounted here in Modal
         from chunk import read_file  # type: ignore[import]
@@ -57,6 +57,17 @@ class TextInputNode(BaseNode):
         for fp in files:
             p = Path(fp)
             if p.suffix.lower() not in _TEXT_EXTS:
+                # For inference, files with no extension might be raw text blobs
+                if ctx.get("pipeline_type") == "infer" and not p.suffix:
+                    try:
+                        raw = p.read_text(encoding="utf-8", errors="replace")
+                        if len(raw.strip()) >= 1:
+                            texts.append(raw)
+                            filenames.append("input")
+                            log(f"  [TextInput] read raw text blob ({len(raw)} chars)")
+                            continue
+                    except Exception:
+                        pass
                 log(f"  [TextInput] skipping unsupported: {p.name}")
                 continue
             try:
@@ -66,7 +77,13 @@ class TextInputNode(BaseNode):
                     filenames.append(p.name)
                     log(f"  [TextInput] read {p.name} ({len(text)} chars)")
                 else:
-                    log(f"  [TextInput] skipped (too short): {p.name}")
+                    # For inference, accept even short text
+                    if ctx.get("pipeline_type") == "infer" and len(text.strip()) >= 1:
+                        texts.append(text)
+                        filenames.append(p.name)
+                        log(f"  [TextInput] read short input {p.name} ({len(text)} chars)")
+                    else:
+                        log(f"  [TextInput] skipped (too short): {p.name}")
             except Exception as e:
                 log(f"  [TextInput] error reading {p.name}: {e}")
 
