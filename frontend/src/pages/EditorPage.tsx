@@ -278,11 +278,18 @@ function EditorContent({ workflowId }: { workflowId: string }) {
   const setNodes = useWorkflowStore((state) => state.setNodes);
   const setEdges = useWorkflowStore((state) => state.setEdges);
 
-  // Load workflow data on mount
+  const addNode = useWorkflowStore((state) => state.addNode);
+
+  // Load workflow data on mount; seed a default output node if canvas is empty
   useEffect(() => {
     if (workflow) {
       setNodes(workflow.nodes);
       setEdges(workflow.edges);
+
+      // If the workflow has no nodes yet, place a default Save Model output node
+      if (workflow.nodes.length === 0) {
+        addNode('saveModel', { x: 700, y: 250 });
+      }
     }
   }, [workflowId]);
 

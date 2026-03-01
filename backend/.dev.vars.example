@@ -1,3 +1,0 @@
-# Copy this to .dev.vars and fill in your OpenAI API key
-# This file is read by `wrangler dev` for local development
-OPENAI_API_KEY=sk-your-key-here

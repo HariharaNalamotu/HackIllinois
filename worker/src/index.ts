@@ -43,9 +43,15 @@
  *
  *   Actian health (direct):
  *   GET  /api/actian/health             → Actian HTTP gateway
+ *
+ *   Agentic AI (merged from backend/):
+ *   POST /api/chat                      → SSE streaming chat (OpenAI + tools + sub-agents)
+ *   GET  /api/feedback                  → retrieve RLHF feedback entries
  */
 
 import { Hono } from "hono";
+import { chatHandler } from "./services/agent_service";
+import { storeFeedback, getRecentFeedback } from "./services/rlhf_service";
 
 export interface Env {
   // KV namespace — workflows (workflow:<id>) and job metadata (job:<id>)
@@ -89,7 +95,7 @@ app.use("*", async (c, next) => {
       headers: {
         "Access-Control-Allow-Origin":  allowed,
         "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type,X-Modal-Secret,Authorization",
+        "Access-Control-Allow-Headers": "Content-Type,X-Modal-Secret,Authorization,X-API-Key",
       },
     });
   }
@@ -674,14 +680,20 @@ app.post("/api/llm/chat", async (c) => {
   return c.json({ content: data.message?.content || "" });
 });
 
-// POST /api/feedback — lightweight sink for UI feedback events
+// POST /api/chat — agentic SSE streaming chat (OpenAI + tools + sub-agents + RLAIF)
+app.post("/api/chat", chatHandler);
+
+// POST /api/feedback — stores in KV and feeds RLHF in-memory store
 app.post("/api/feedback", async (c) => {
   const body = await c.req.json<{
     messageId?: string;
     rating?: "up" | "down";
     feedback?: string;
+    conversationSnippet?: string;
   }>();
   const id = body.messageId || crypto.randomUUID();
+
+  // Persist to KV
   await c.env.JOB_KV.put(
     `feedback:${id}:${Date.now()}`,
     JSON.stringify({
@@ -692,7 +704,21 @@ app.post("/api/feedback", async (c) => {
     }),
     { expirationTtl: 60 * 60 * 24 * 30 }
   );
+
+  // Also feed the in-memory RLHF store for system prompt enrichment
+  storeFeedback({
+    messageId: id,
+    rating: body.rating || "up",
+    feedback: body.feedback,
+    conversationSnippet: body.conversationSnippet,
+  });
+
   return c.json({ ok: true });
+});
+
+// GET /api/feedback — retrieve recent RLHF feedback entries
+app.get("/api/feedback", (c) => {
+  return c.json({ feedback: getRecentFeedback() });
 });
 
 // POST /api/deploy/:workflowId — persistent inference endpoint for deployment workflows

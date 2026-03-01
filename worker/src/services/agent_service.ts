@@ -2,7 +2,7 @@
 // Takes workflow config + user messages, orchestrates OpenAI calls with tools, sub-agents, RLAIF
 
 import type { Context } from 'hono';
-import type { AppContext } from '../index';
+import type { Env } from '../index';
 import { buildToolDefinitions, executeTool, ToolDefinition } from './tool_service';
 import { getSubAgentConfigs, buildSubAgentTools, executeSubAgent, SubAgentConfig } from './subagent_service';
 import { getRLAIFConfig, evaluateResponse, getGoodResponseExamples } from './rlaif_service';
@@ -54,10 +54,11 @@ function sseEvent(type: string, data: any): string {
   return `data: ${JSON.stringify({ type, ...data })}\n\n`;
 }
 
-export async function chatHandler(c: Context<AppContext>) {
-  const apiKey = c.req.header('X-API-Key');
+export async function chatHandler(c: Context<{ Bindings: Env }>) {
+  // Accept API key from either X-API-Key header or the worker's env
+  const apiKey = c.req.header('X-API-Key') || c.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return c.json({ error: 'X-API-Key header is required. Set your OpenAI API key in Settings.' }, 401);
+    return c.json({ error: 'No OpenAI API key available. Set it in Settings or configure OPENAI_API_KEY on the worker.' }, 401);
   }
 
   let body: ChatRequest;
@@ -105,7 +106,7 @@ export async function chatHandler(c: Context<AppContext>) {
   // Process in background
   const processChat = async () => {
     let fullResponse = '';
-    let lastUserMessage = messages[messages.length - 1]?.content || '';
+    const lastUserMessage = messages[messages.length - 1]?.content || '';
 
     try {
       // Initial OpenAI call
@@ -149,7 +150,6 @@ export async function chatHandler(c: Context<AppContext>) {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
     },
   });
 }
@@ -249,7 +249,6 @@ async function streamOpenAIResponse(
 
   // If the model made tool calls, execute them and continue
   if (hasToolCalls && toolCallAccumulator.size > 0) {
-    // Add the assistant message with tool calls to the conversation
     const assistantMsg: any = {
       role: 'assistant',
       content: fullContent || null,

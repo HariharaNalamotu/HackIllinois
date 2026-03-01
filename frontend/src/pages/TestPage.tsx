@@ -555,7 +555,7 @@ export const TestPage: React.FC = () => {
   };
 
   // Determine the primary input type
-  const inputTypes: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'];
+  const inputTypes: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput', 'agenticLLM'];
   const workflowInputTypes = workflow.nodes
     .filter((node) => inputTypes.includes(node.data.type as InputNodeType))
     .map((node) => node.data.type as InputNodeType);

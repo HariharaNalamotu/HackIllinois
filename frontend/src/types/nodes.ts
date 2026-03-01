@@ -4,6 +4,7 @@ import {
   SplitSquareHorizontal, Layers, Eye, Scan,
   Mic, Activity, BarChart3, Save,
   Bot, Cpu, Globe,
+  Wrench, Brain, Sparkles, Users, SlidersHorizontal,
   LucideIcon
 } from 'lucide-react';
 
@@ -506,6 +507,72 @@ export const nodeDefinitions: NodeDefinition[] = [
     category: 'processing',
     color: '#fb923c',
     requiredInput: 'spreadsheetInput',
+  },
+
+  // ── Agentic Input ───────────────────────────────────────────────────────
+  {
+    type: 'agenticLLM',
+    label: 'Agentic LLM Input',
+    description: 'Multimodal input for agentic LLM orchestration workflows',
+    icon: Bot,
+    category: 'input',
+    color: '#ff9500',
+  },
+
+  // ── Agentic Optimization ──────────────────────────────────────────────
+  {
+    type: 'agentTool',
+    label: 'Agent Tools',
+    description: 'Define callable tools for agentic workflow execution',
+    icon: Wrench,
+    category: 'processing',
+    color: '#ffd700',
+    requiredInput: 'agenticLLM',
+  },
+  {
+    type: 'rlhf',
+    label: 'RLHF',
+    description: 'Reinforcement learning with human feedback optimization',
+    icon: Brain,
+    category: 'processing',
+    color: '#f472b6',
+    requiredInput: 'agenticLLM',
+  },
+  {
+    type: 'rlaif',
+    label: 'RLAIF',
+    description: 'Reinforcement learning with AI feedback optimization',
+    icon: Sparkles,
+    category: 'processing',
+    color: '#818cf8',
+    requiredInput: 'agenticLLM',
+  },
+  {
+    type: 'subAgent',
+    label: 'Sub-Agent',
+    description: 'Add sub-agents for orchestrated agentic workflows',
+    icon: Users,
+    category: 'processing',
+    color: '#fb923c',
+    requiredInput: 'agenticLLM',
+  },
+  {
+    type: 'chunkingOptimization',
+    label: 'Chunking Optimization',
+    description: 'Optimize chunking strategy for better retrieval performance',
+    icon: SplitSquareHorizontal,
+    category: 'processing',
+    color: '#2dd4bf',
+    requiredInput: 'textInput',
+  },
+  {
+    type: 'hyperparamTuning',
+    label: 'Hyperparameter Tuning',
+    description: 'Automated hyperparameter optimization for traditional ML models',
+    icon: SlidersHorizontal,
+    category: 'processing',
+    color: '#c084fc',
+    requiredInput: 'imageInput',
   },
 
   // ── Deployment nodes ──────────────────────────────────────────────────────

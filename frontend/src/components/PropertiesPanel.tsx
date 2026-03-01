@@ -1,7 +1,8 @@
 import React, { useRef, useCallback, useState } from 'react';
-import { Settings, Trash2, Upload, FolderOpen, File, X, Info, CheckCircle, Copy, Globe } from 'lucide-react';
+import { Settings, Trash2, Upload, FolderOpen, File, X, Info, CheckCircle, Copy, Globe, Plus } from 'lucide-react';
 import { useParams } from 'react-router-dom';
-import { useWorkflowStore, NodeType } from '../store/workflowStore';
+import { useWorkflowStore, NodeType, ToolParameter } from '../store/workflowStore';
+import { v4 as uuidv4 } from 'uuid';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import {
   nodeDefinitions,
@@ -16,6 +17,9 @@ import {
   FINE_TUNE_METHODS,
   POOLING_OPTIONS,
   LLM_PROVIDERS,
+  parameterTypeOptions,
+  chunkingStrategyOptions,
+  modelOptions,
 } from '../types/nodes';
 
 import { getStoredBackendUrl } from './SettingsModal';
@@ -1481,6 +1485,331 @@ const SaveModelForm: React.FC = () => {
 
 // ── Form selector ─────────────────────────────────────────────────────────────
 
+// ── Checkbox field ──────────────────────────────────────────────────────────
+
+const CheckboxField: React.FC<{
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}> = ({ label, checked, onChange }) => (
+  <label className="flex items-center gap-3 cursor-pointer group">
+    <div
+      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+        checked ? 'bg-[#00d4ff] border-[#00d4ff]' : 'border-[#2a2a38] group-hover:border-[#00d4ff]'
+      }`}
+      onClick={() => onChange(!checked)}
+    >
+      {checked && (
+        <svg className="w-3 h-3 text-[#0a0a0f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+        </svg>
+      )}
+    </div>
+    <span className="text-sm text-gray-300">{label}</span>
+  </label>
+);
+
+// ── Tool Parameter Editor for Agent Tools ───────────────────────────────────
+
+const ToolParameterEditor: React.FC<{
+  parameters: ToolParameter[];
+  onChange: (parameters: ToolParameter[]) => void;
+}> = ({ parameters, onChange }) => {
+  const addParameter = () => {
+    const newParam: ToolParameter = {
+      id: uuidv4(),
+      name: '',
+      type: 'string',
+      description: '',
+      required: false,
+    };
+    onChange([...parameters, newParam]);
+  };
+
+  const updateParameter = (id: string, updates: Partial<ToolParameter>) => {
+    onChange(parameters.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+  };
+
+  const removeParameter = (id: string) => {
+    onChange(parameters.filter((p) => p.id !== id));
+  };
+
+  const addObjectProperty = (paramId: string) => {
+    const param = parameters.find((p) => p.id === paramId);
+    if (param) {
+      const props = param.objectProperties || [];
+      updateParameter(paramId, { objectProperties: [...props, { key: '', value: '' }] });
+    }
+  };
+
+  const updateObjectProperty = (paramId: string, index: number, key: string, value: string) => {
+    const param = parameters.find((p) => p.id === paramId);
+    if (param && param.objectProperties) {
+      const newProps = [...param.objectProperties];
+      newProps[index] = { key, value };
+      updateParameter(paramId, { objectProperties: newProps });
+    }
+  };
+
+  const removeObjectProperty = (paramId: string, index: number) => {
+    const param = parameters.find((p) => p.id === paramId);
+    if (param && param.objectProperties) {
+      updateParameter(paramId, { objectProperties: param.objectProperties.filter((_, i) => i !== index) });
+    }
+  };
+
+  const addArrayValue = (paramId: string) => {
+    const param = parameters.find((p) => p.id === paramId);
+    if (param) {
+      updateParameter(paramId, { arrayValues: [...(param.arrayValues || []), ''] });
+    }
+  };
+
+  const updateArrayValue = (paramId: string, index: number, value: string) => {
+    const param = parameters.find((p) => p.id === paramId);
+    if (param && param.arrayValues) {
+      const newValues = [...param.arrayValues];
+      newValues[index] = value;
+      updateParameter(paramId, { arrayValues: newValues });
+    }
+  };
+
+  const removeArrayValue = (paramId: string, index: number) => {
+    const param = parameters.find((p) => p.id === paramId);
+    if (param && param.arrayValues) {
+      updateParameter(paramId, { arrayValues: param.arrayValues.filter((_, i) => i !== index) });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="text-xs text-gray-400 uppercase tracking-wide">Function Parameters</label>
+        <button
+          onClick={addParameter}
+          className="flex items-center gap-1 text-xs text-[#00d4ff] hover:text-[#00b8d4] transition-colors"
+        >
+          <Plus className="w-3 h-3" />
+          Add Parameter
+        </button>
+      </div>
+
+      {parameters.length === 0 ? (
+        <p className="text-xs text-gray-600 italic">No parameters defined</p>
+      ) : (
+        <div className="space-y-4">
+          {parameters.map((param) => (
+            <div key={param.id} className="bg-[#12121a] border border-[#2a2a38] rounded-lg p-3 space-y-3">
+              <div className="flex items-start justify-between">
+                <input
+                  type="text"
+                  value={param.name}
+                  onChange={(e) => updateParameter(param.id, { name: e.target.value })}
+                  placeholder="Parameter name"
+                  className="bg-transparent border-b border-[#2a2a38] text-sm text-gray-200 focus:outline-none focus:border-[#00d4ff] pb-1"
+                />
+                <button
+                  onClick={() => removeParameter(param.id)}
+                  className="text-gray-500 hover:text-red-400 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={param.type}
+                  onChange={(e) => updateParameter(param.id, { type: e.target.value as ToolParameter['type'] })}
+                  className="bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300"
+                >
+                  {parameterTypeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={param.required}
+                    onChange={(e) => updateParameter(param.id, { required: e.target.checked })}
+                    className="rounded"
+                  />
+                  Required
+                </label>
+              </div>
+
+              <textarea
+                value={param.description}
+                onChange={(e) => updateParameter(param.id, { description: e.target.value })}
+                placeholder="Description"
+                rows={2}
+                className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300 resize-none"
+              />
+
+              {param.type === 'object' && (
+                <div className="space-y-2 pl-3 border-l-2 border-[#2a2a38]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Object Properties</span>
+                    <button onClick={() => addObjectProperty(param.id)} className="text-xs text-[#00d4ff]">+ Add</button>
+                  </div>
+                  {(param.objectProperties || []).map((prop, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input type="text" value={prop.key} onChange={(e) => updateObjectProperty(param.id, idx, e.target.value, prop.value)} placeholder="Key" className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300" />
+                      <input type="text" value={prop.value} onChange={(e) => updateObjectProperty(param.id, idx, prop.key, e.target.value)} placeholder="Value" className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300" />
+                      <button onClick={() => removeObjectProperty(param.id, idx)} className="text-gray-500 hover:text-red-400"><X className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {param.type === 'array' && (
+                <div className="space-y-2 pl-3 border-l-2 border-[#2a2a38]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Array Values</span>
+                    <button onClick={() => addArrayValue(param.id)} className="text-xs text-[#00d4ff]">+ Add</button>
+                  </div>
+                  {(param.arrayValues || []).map((val, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input type="text" value={val} onChange={(e) => updateArrayValue(param.id, idx, e.target.value)} placeholder={`Value ${idx + 1}`} className="flex-1 bg-[#1a1a24] border border-[#2a2a38] rounded px-2 py-1 text-xs text-gray-300" />
+                      <button onClick={() => removeArrayValue(param.id, idx)} className="text-gray-500 hover:text-red-400"><X className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Agentic form components ─────────────────────────────────────────────────
+
+const AgenticLLMForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <SelectField label="Sub-Agent Model" value={params.subAgentModel as string} options={modelOptions} onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentModel: v })} />
+      <TextField label="Sub-Agent Prompt" value={params.subAgentPrompt as string} onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentPrompt: v })} placeholder="Enter the prompt for the sub-agent..." multiline />
+    </div>
+  );
+};
+
+const AgentToolForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <TextField label="Function Name" value={params.functionName as string} onChange={(v) => updateNodeParameters(selectedNode.id, { functionName: v })} placeholder="e.g., search_web" />
+      <TextField label="Function Description" value={params.functionDescription as string} onChange={(v) => updateNodeParameters(selectedNode.id, { functionDescription: v })} placeholder="Describe what this function does..." multiline />
+      <ToolParameterEditor
+        parameters={(params.parameters as ToolParameter[]) || []}
+        onChange={(p) => updateNodeParameters(selectedNode.id, { parameters: p })}
+      />
+    </div>
+  );
+};
+
+const RLHFForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <NumberField label="Number of Iterations" value={params.iterations as number} onChange={(v) => updateNodeParameters(selectedNode.id, { iterations: v })} min={1} max={100} />
+    </div>
+  );
+};
+
+const RLAIFForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <SelectField label="Evaluator Model" value={params.evaluatorModel as string} options={modelOptions} onChange={(v) => updateNodeParameters(selectedNode.id, { evaluatorModel: v })} />
+      <NumberField label="Number of Iterations" value={params.iterations as number} onChange={(v) => updateNodeParameters(selectedNode.id, { iterations: v })} min={1} max={100} />
+    </div>
+  );
+};
+
+const SubAgentForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <SelectField label="Sub-Agent Model" value={params.subAgentModel as string} options={modelOptions} onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentModel: v })} />
+      <TextField label="Sub-Agent Prompt" value={params.subAgentPrompt as string} onChange={(v) => updateNodeParameters(selectedNode.id, { subAgentPrompt: v })} placeholder="Enter the prompt for the sub-agent..." multiline />
+    </div>
+  );
+};
+
+const ChunkingOptimizationForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <CheckboxField
+        label="Enable Auto-Optimization"
+        checked={params.enableAutoOptimization as boolean}
+        onChange={(v) => updateNodeParameters(selectedNode.id, { enableAutoOptimization: v })}
+      />
+      <div className="space-y-2">
+        <label className="text-xs text-gray-400 uppercase tracking-wide">Test Strategies</label>
+        <div className="space-y-2">
+          {chunkingStrategyOptions.map((strategy) => (
+            <CheckboxField
+              key={strategy.value}
+              label={strategy.label}
+              checked={((params.testStrategies as string[]) || []).includes(strategy.value)}
+              onChange={(checked) => {
+                const current = (params.testStrategies as string[]) || [];
+                const updated = checked
+                  ? [...current, strategy.value]
+                  : current.filter((s: string) => s !== strategy.value);
+                updateNodeParameters(selectedNode.id, { testStrategies: updated });
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const HyperparamTuningForm: React.FC = () => {
+  const selectedNode = useWorkflowStore((s) => s.selectedNode);
+  const updateNodeParameters = useWorkflowStore((s) => s.updateNodeParameters);
+  if (!selectedNode) return null;
+  const params = selectedNode.data.parameters;
+
+  return (
+    <div className="space-y-4">
+      <label className="text-xs text-gray-400 uppercase tracking-wide">Search Methods</label>
+      <CheckboxField label="Grid Search" checked={params.enableGridSearch as boolean} onChange={(v) => updateNodeParameters(selectedNode.id, { enableGridSearch: v })} />
+      <CheckboxField label="Random Search" checked={params.enableRandomSearch as boolean} onChange={(v) => updateNodeParameters(selectedNode.id, { enableRandomSearch: v })} />
+      <CheckboxField label="Bayesian Optimization" checked={params.enableBayesian as boolean} onChange={(v) => updateNodeParameters(selectedNode.id, { enableBayesian: v })} />
+    </div>
+  );
+};
+
 const getFormComponent = (type: NodeType): React.FC | null => {
   const map: Partial<Record<NodeType, React.FC>> = {
     // Input nodes
@@ -1531,6 +1860,14 @@ const getFormComponent = (type: NodeType): React.FC | null => {
     tabularRNN: TabularSequentialForm,
     tabularFFNN: TabularDenseForm,
     tabularDNN: TabularDenseForm,
+    // Agentic nodes
+    agenticLLM: AgenticLLMForm,
+    agentTool: AgentToolForm,
+    rlhf: RLHFForm,
+    rlaif: RLAIFForm,
+    subAgent: SubAgentForm,
+    chunkingOptimization: ChunkingOptimizationForm,
+    hyperparamTuning: HyperparamTuningForm,
     // Output nodes
     saveModel: SaveModelForm,
     deployModelNode: DeployModelNodeForm,

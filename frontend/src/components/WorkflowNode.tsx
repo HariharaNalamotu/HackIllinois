@@ -8,7 +8,11 @@ type WorkflowNodeProps = NodeProps & {
   data: NodeData;
 };
 
-const INPUT_TYPES: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'];
+const INPUT_TYPES: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput', 'agenticLLM'];
+
+const OPTIMIZATION_TYPES = new Set([
+  'agentTool', 'rlhf', 'rlaif', 'subAgent', 'chunkingOptimization', 'hyperparamTuning',
+]);
 
 const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected }) => {
   const setSelectedNode = useWorkflowStore((state) => state.setSelectedNode);
@@ -19,7 +23,8 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
   const color = definition?.color || '#00d4ff';
 
   const isInput = INPUT_TYPES.includes(data.type as InputNodeType);
-  const isOutput = data.type === 'saveModel';
+  const isOutput = data.type === 'saveModel' || data.type === 'deployOutputNode';
+  const isOptimization = OPTIMIZATION_TYPES.has(data.type);
   const isProcessing = !isInput && !isOutput;
 
   const handleClick = () => {
@@ -57,14 +62,14 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
     <div
       onClick={handleClick}
       className={`
-        min-w-[220px] max-w-[280px] rounded-lg overflow-hidden
+        relative min-w-[220px] max-w-[280px] rounded-lg
         bg-[#1a1a24] border transition-all duration-200 cursor-pointer
         ${selected ? 'border-[#00d4ff] shadow-lg shadow-[#00d4ff]/20' : 'border-[#2a2a38]'}
       `}
     >
       {/* Header */}
       <div
-        className="px-3 py-2 flex items-center gap-2"
+        className="px-3 py-2 flex items-center gap-2 rounded-t-lg"
         style={{ backgroundColor: color + '20', borderBottom: `1px solid ${color}40` }}
       >
         <GripHorizontal className="w-4 h-4 text-gray-500 cursor-grab" />
@@ -86,19 +91,53 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
         </div>
       )}
 
-      {/* Input nodes: source handle on the right */}
-      {isInput && (
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="output"
-          className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
-          style={{ backgroundColor: color }}
-        />
+      {/* Bottom spacer for nodes with a bottom handle */}
+      {(isInput || (isProcessing && !isOptimization)) && (
+        <div className="h-2" />
       )}
 
-      {/* Processing nodes: target on left, source on right */}
-      {isProcessing && (
+      {/* Input nodes: source handle on the right only (no left handle) */}
+      {isInput && (
+        <>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="output"
+            className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
+            style={{ backgroundColor: color }}
+          />
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="opt-output"
+            className="!w-[14px] !h-[14px] !border-2 !border-[#1a1a24]"
+            style={{ backgroundColor: '#ffd700', bottom: '-7px' }}
+          />
+        </>
+      )}
+
+      {/* Optimization nodes: target on top, source on right */}
+      {isProcessing && isOptimization && (
+        <>
+          <Handle
+            type="target"
+            position={Position.Top}
+            id="opt-input"
+            className="!w-[14px] !h-[14px] !border-2 !border-[#1a1a24]"
+            style={{ backgroundColor: '#ffd700', top: '-7px' }}
+          />
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="output"
+            className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
+            style={{ backgroundColor: color }}
+          />
+        </>
+      )}
+
+      {/* Regular processing nodes: target on left, source on right, bottom handle for optimization */}
+      {isProcessing && !isOptimization && (
         <>
           <Handle
             type="target"
@@ -113,10 +152,17 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
             className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
             style={{ backgroundColor: color }}
           />
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="opt-output"
+            className="!w-[14px] !h-[14px] !border-2 !border-[#1a1a24]"
+            style={{ backgroundColor: '#ffd700', bottom: '-7px' }}
+          />
         </>
       )}
 
-      {/* Save Model node: only a target handle on the left */}
+      {/* Output nodes: only a target handle on the left (no right handle) */}
       {isOutput && (
         <Handle
           type="target"

@@ -4,8 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 
 // ── Node type taxonomy ────────────────────────────────────────────────────────
 
-/** The four mutually-exclusive input types */
-export type InputNodeType = 'textInput' | 'imageInput' | 'audioInput' | 'spreadsheetInput';
+/** The five mutually-exclusive input types */
+export type InputNodeType = 'textInput' | 'imageInput' | 'audioInput' | 'spreadsheetInput' | 'agenticLLM';
 
 /** Processing nodes — shown/enabled only when the relevant input is present */
 export type ProcessNodeType =
@@ -20,6 +20,13 @@ export type ProcessNodeType =
   | 'tabularModel'     // spreadsheet
   | 'deployModelNode'  // deployment: pick a trained/pretrained model
   | 'llmNode'          // deployment: LLM augmentation
+  // Agentic optimization nodes
+  | 'agentTool'
+  | 'rlhf'
+  | 'rlaif'
+  | 'subAgent'
+  | 'chunkingOptimization'
+  | 'hyperparamTuning'
   // Chunk variants
   | 'chunkAuto'
   | 'chunkSentence'
@@ -58,6 +65,17 @@ export type ProcessNodeType =
 export type OutputNodeType = 'saveModel' | 'deployOutputNode';
 
 export type NodeType = InputNodeType | ProcessNodeType | OutputNodeType;
+
+// Tool parameter type for agent tools
+export interface ToolParameter {
+  id: string;
+  name: string;
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'object' | 'array';
+  description: string;
+  required: boolean;
+  objectProperties?: { key: string; value: string }[];
+  arrayValues?: string[];
+}
 
 export interface NodeData {
   label: string;
@@ -177,6 +195,24 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
     case 'tabularDNN':
       return { targetColumn: '', numLayers: 2, hiddenDim: 128, numEpochs: 20, batchSize: 64, learningRate: 1e-3, outputName: '' };
 
+    // Agentic input
+    case 'agenticLLM':
+      return { subAgentModel: 'gpt-5.2', subAgentPrompt: '' };
+
+    // Agentic optimization nodes
+    case 'agentTool':
+      return { functionName: '', functionDescription: '', parameters: [] as ToolParameter[] };
+    case 'rlhf':
+      return { iterations: 3 };
+    case 'rlaif':
+      return { evaluatorModel: 'gpt-5.2', iterations: 3 };
+    case 'subAgent':
+      return { subAgentModel: 'gpt-5.2', subAgentPrompt: '' };
+    case 'chunkingOptimization':
+      return { enableAutoOptimization: true, testStrategies: ['recursive', 'semantic', 'sentence'] };
+    case 'hyperparamTuning':
+      return { enableGridSearch: true, enableRandomSearch: false, enableBayesian: false };
+
     case 'deployModelNode':
       return { modelName: '', inputType: 'textInput' };
 
@@ -213,6 +249,14 @@ const getNodeLabel = (type: NodeType): string => {
     tabularModel: 'Tabular Neural Net',
     deployModelNode: 'Deploy Model',
     llmNode: 'LLM Node',
+    // Agentic
+    agenticLLM: 'Agentic LLM Input',
+    agentTool: 'Agent Tool',
+    rlhf: 'RLHF',
+    rlaif: 'RLAIF',
+    subAgent: 'Sub-Agent',
+    chunkingOptimization: 'Chunking Optimization',
+    hyperparamTuning: 'Hyperparameter Tuning',
     // Outputs
     deployOutputNode: 'Deploy Output',
     saveModel: 'Save Model',
@@ -253,7 +297,7 @@ const getNodeLabel = (type: NodeType): string => {
   return labels[type] ?? 'Node';
 };
 
-const INPUT_TYPES: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput'];
+const INPUT_TYPES: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput', 'agenticLLM'];
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,4 @@
 // RLAIF service — evaluates agent responses using a separate evaluator model
-// After the main agent responds, this service scores the response
 
 export interface RLAIFScore {
   helpfulness: number;
@@ -97,7 +96,6 @@ Where N is an integer from 1 to 10.
         response: assistantResponse.slice(0, 500),
         score: score.overall,
       });
-      // Keep only last 20 patterns
       if (goodResponsePatterns.length > 20) {
         goodResponsePatterns.shift();
       }

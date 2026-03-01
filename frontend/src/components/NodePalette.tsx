@@ -233,6 +233,7 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
   const imageDetectNodes   = trainingProcessing.filter((n) => n.requiredInput === 'imageInput' && n.requiredImageFormat === 'boundingbox');
   const audioNodes         = trainingProcessing.filter((n) => n.requiredInput === 'audioInput');
   const tabularNodes       = trainingProcessing.filter((n) => n.requiredInput === 'spreadsheetInput');
+  const agenticNodes       = trainingProcessing.filter((n) => n.requiredInput === 'agenticLLM');
 
   const renderGroup = (groupNodes: NodeDefinition[]) =>
     groupNodes.map((def) => {
@@ -305,6 +306,13 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
             <>
               <SubGroup label="Tabular" />
               {renderGroup(tabularNodes)}
+            </>
+          )}
+
+          {agenticNodes.length > 0 && (
+            <>
+              <SubGroup label="Agentic LLM" />
+              {renderGroup(agenticNodes)}
             </>
           )}
         </Category>
