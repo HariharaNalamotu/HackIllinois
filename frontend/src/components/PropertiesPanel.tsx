@@ -578,41 +578,32 @@ const EmbeddingModelForm: React.FC = () => {
         options={EMBEDDING_MODELS}
         onChange={(v) => update(node.id, { model: v })}
       />
-      <Toggle
-        label="Fine-tune on your data?"
-        checked={p.fineTune as boolean}
-        onChange={(v) => update(node.id, { fineTune: v })}
+      <Section title="Fine-tuning" />
+      <SelectField
+        label="Training Method"
+        value={p.method as string}
+        options={FINE_TUNE_METHODS}
+        onChange={(v) => update(node.id, { method: v })}
       />
-      {!!p.fineTune && (
-        <>
-          <Section title="Fine-tuning" />
-          <SelectField
-            label="Training Method"
-            value={p.method as string}
-            options={FINE_TUNE_METHODS}
-            onChange={(v) => update(node.id, { method: v })}
-          />
-          <NumberField
-            label="Epochs"
-            value={p.epochs as number}
-            onChange={(v) => update(node.id, { epochs: v })}
-            min={1}
-            max={100}
-          />
-          <NumberField
-            label="Learning Rate"
-            value={p.learningRate as number}
-            onChange={(v) => update(node.id, { learningRate: v })}
-            min={1e-6}
-            max={0.1}
-            step={1e-5}
-          />
-          <OutputNameField
-            value={p.outputName as string}
-            onChange={(v) => update(node.id, { outputName: v })}
-          />
-        </>
-      )}
+      <NumberField
+        label="Epochs"
+        value={p.epochs as number}
+        onChange={(v) => update(node.id, { epochs: v })}
+        min={1}
+        max={100}
+      />
+      <NumberField
+        label="Learning Rate"
+        value={p.learningRate as number}
+        onChange={(v) => update(node.id, { learningRate: v })}
+        min={1e-6}
+        max={0.1}
+        step={1e-5}
+      />
+      <OutputNameField
+        value={p.outputName as string}
+        onChange={(v) => update(node.id, { outputName: v })}
+      />
     </div>
   );
 };
@@ -1271,14 +1262,9 @@ const EmbeddingVariantForm: React.FC = () => {
   const p = node.data.parameters;
   return (
     <div className="space-y-4">
-      <Toggle label="Fine-tune" checked={p.fineTune as boolean} onChange={(v) => update(node.id, { fineTune: v })} />
-      {!!(p.fineTune) && (
-        <>
-          <SelectField label="Fine-tune Method" value={p.method as string} options={FINE_TUNE_METHODS} onChange={(v) => update(node.id, { method: v })} />
-          <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={100} />
-          <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.1} step={1e-5} />
-        </>
-      )}
+      <SelectField label="Training Method" value={p.method as string} options={FINE_TUNE_METHODS} onChange={(v) => update(node.id, { method: v })} />
+      <NumberField label="Epochs" value={p.epochs as number} onChange={(v) => update(node.id, { epochs: v })} min={1} max={100} />
+      <NumberField label="Learning Rate" value={p.learningRate as number} onChange={(v) => update(node.id, { learningRate: v })} min={1e-6} max={0.1} step={1e-5} />
       <OutputNameField value={p.outputName as string} onChange={(v) => update(node.id, { outputName: v })} />
     </div>
   );

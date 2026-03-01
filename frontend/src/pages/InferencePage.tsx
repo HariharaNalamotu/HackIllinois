@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Zap, Copy, CheckCircle } from 'lucide-react';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { runInference } from '../services/api';
-import { buildPipelineSpec } from '../utils/pipelineBuilder';
+import { buildInferPipelineFromTraining } from '../utils/pipelineBuilder';
 import type { InputNodeType } from '../store/workflowStore';
 
 import { getStoredBackendUrl } from '../components/SettingsModal';
@@ -198,7 +198,9 @@ export const InferencePage: React.FC = () => {
     .map((n) => n.data.type as string)
     .find((t) => inputTypes.includes(t as InputNodeType)) as InputNodeType | undefined;
 
-  const endpointUrl = `${getWorkerBase()}/api/deploy/${workflowId}`;
+  // For deployment workflows, use source training ID so Actian collection name matches
+  const inferWorkflowId = workflow.sourceTrainingId || workflowId;
+  const endpointUrl = `${getWorkerBase()}/api/deploy/${inferWorkflowId}`;
 
   const submit = async (inputData: string | File | File[]) => {
     setLoading(true);
@@ -206,10 +208,12 @@ export const InferencePage: React.FC = () => {
     setResult(null);
     setLlmResponse(undefined);
     try {
-      // Build infer pipeline spec from workflow nodes/edges
+      // Build infer pipeline from workflow (same pipeline minus save node)
+      const trainedModel = workflow.trainedModels[workflow.trainedModels.length - 1];
+      if (!trainedModel) throw new Error('No trained model found. Train this workflow first.');
       const edges = workflow.edges || [];
-      const pipelineSpec = buildPipelineSpec(workflow.nodes, edges, 'infer');
-      const res = await runInference(workflowId, inputData, pipelineSpec);
+      const pipelineSpec = buildInferPipelineFromTraining(workflow.nodes, edges, trainedModel);
+      const res = await runInference(inferWorkflowId, inputData, pipelineSpec);
       setResult(res.result);
       setLlmResponse(res.llmResponse);
     } catch (err: any) {

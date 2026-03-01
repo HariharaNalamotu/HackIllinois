@@ -61,7 +61,7 @@ const NODE_TYPE_MAP: Record<string, string> = {
   tabularDNN:  'tabular_model',
   // Output nodes
   saveModel:        'model_save',
-  deployModelNode:  'infer_output',
+  // deployModelNode is handled dynamically in buildPipelineSpec based on inputType
   llmNode:          'api_output',
   deployOutputNode: 'infer_output',
 };
@@ -95,8 +95,7 @@ function translateParams(
     // ── Legacy combined nodes ────────────────────────────────────────────────
     case 'embeddingModel':
       if (params.model) out['base_model'] = params.model;
-      if (params.fineTune && params.method) out['method'] = params.method;
-      else if (!params.fineTune) out['method'] = 'simcse';
+      out['method'] = params.method || 'simcse';
       break;
 
     case 'imageClassifier':
@@ -145,23 +144,23 @@ function translateParams(
     // ── Embedding variants ────────────────────────────────────────────────────
     case 'embeddingMiniLM':
       out['base_model'] = 'sentence-transformers/all-MiniLM-L6-v2';
-      if (params.fineTune && params.method) out['method'] = params.method;
+      out['method'] = params.method || 'simcse';
       break;
     case 'embeddingMPNet':
       out['base_model'] = 'sentence-transformers/all-mpnet-base-v2';
-      if (params.fineTune && params.method) out['method'] = params.method;
+      out['method'] = params.method || 'simcse';
       break;
     case 'embeddingBGESmall':
       out['base_model'] = 'BAAI/bge-small-en-v1.5';
-      if (params.fineTune && params.method) out['method'] = params.method;
+      out['method'] = params.method || 'simcse';
       break;
     case 'embeddingBGEBase':
       out['base_model'] = 'BAAI/bge-base-en-v1.5';
-      if (params.fineTune && params.method) out['method'] = params.method;
+      out['method'] = params.method || 'simcse';
       break;
     case 'embeddingMultilingual':
       out['base_model'] = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2';
-      if (params.fineTune && params.method) out['method'] = params.method;
+      out['method'] = params.method || 'simcse';
       break;
 
     // ── Image classifier variants ─────────────────────────────────────────────
@@ -250,7 +249,32 @@ function translateParams(
       break;
   }
 
+  // ── Deploy model node — pass model name as both base_model and output_name ──
+  if (frontendType === 'deployModelNode') {
+    if (params.modelName) {
+      out['output_name'] = params.modelName;
+      out['base_model']  = params.modelName;
+    }
+  }
+
   return out;
+}
+
+// ── Resolve deployModelNode to the correct backend model type ────────────────
+
+const DEPLOY_INPUT_TYPE_TO_BACKEND: Record<string, string> = {
+  textInput:        'text_model',
+  imageInput:       'cnn_model',
+  audioInput:       'audio_model',
+  spreadsheetInput: 'tabular_model',
+};
+
+function resolveBackendType(node: { data: { type: string; parameters: Record<string, unknown> } }): string {
+  if (node.data.type === 'deployModelNode') {
+    const inputType = (node.data.parameters.inputType as string) || 'textInput';
+    return DEPLOY_INPUT_TYPE_TO_BACKEND[inputType] || 'text_model';
+  }
+  return NODE_TYPE_MAP[node.data.type] ?? node.data.type;
 }
 
 // ── Main builder ──────────────────────────────────────────────────────────────
@@ -279,7 +303,7 @@ export function buildPipelineSpec(
 ): PipelineSpec {
   const backendNodes: BackendNodeSpec[] = nodes.map((n) => ({
     id:     n.id,
-    type:   NODE_TYPE_MAP[n.data.type] ?? n.data.type,
+    type:   resolveBackendType(n),
     params: translateParams(n.data.type, n.data.parameters),
   }));
 
@@ -293,6 +317,61 @@ export function buildPipelineSpec(
     nodes: backendNodes,
     edges: backendEdges,
   };
+}
+
+// ── Model node types (backend) ───────────────────────────────────────────────
+
+const MODEL_NODE_TYPES = new Set([
+  'text_model', 'cnn_model', 'audio_model', 'audio_cnn',
+  'object_detect_model', 'image_cae', 'tabular_model',
+]);
+
+/**
+ * Build an inference pipeline by transforming a training pipeline:
+ * 1. Remove the model_save node and its edges
+ * 2. Inject output_name + base_model into model nodes (for correct model/collection)
+ * 3. Append infer_output terminal node
+ * 4. Set pipeline_type = 'infer'
+ */
+export function buildInferPipelineFromTraining(
+  nodes: WorkflowNode[],
+  edges: Edge[],
+  trainedModelName: string,
+): PipelineSpec {
+  const spec = buildPipelineSpec(nodes, edges, 'train');
+
+  // Find and remove model_save node
+  const saveIdx = spec.nodes.findIndex((n) => n.type === 'model_save');
+  const saveNodeId = saveIdx >= 0 ? spec.nodes[saveIdx].id : null;
+  if (saveIdx >= 0) spec.nodes.splice(saveIdx, 1);
+
+  // Remove edges to/from model_save
+  const edgesToSave = spec.edges.filter((e) => e.to === saveNodeId);
+  spec.edges = spec.edges.filter((e) => e.from !== saveNodeId && e.to !== saveNodeId);
+
+  // Find the node that was connected TO saveModel (last processing node)
+  const lastNodeId = edgesToSave.length > 0
+    ? edgesToSave[0].from
+    : spec.nodes[spec.nodes.length - 1]?.id;
+
+  // Inject output_name + base_model into model nodes so _infer() loads the
+  // correct fine-tuned model and queries the right Actian collection
+  for (const node of spec.nodes) {
+    if (MODEL_NODE_TYPES.has(node.type)) {
+      node.params.output_name = trainedModelName;
+      node.params.base_model  = trainedModelName;
+    }
+  }
+
+  // Append infer_output terminal node
+  const inferOutputId = '__infer_output__';
+  spec.nodes.push({ id: inferOutputId, type: 'infer_output', params: {} });
+  if (lastNodeId) {
+    spec.edges.push({ from: lastNodeId, to: inferOutputId });
+  }
+
+  spec.pipeline_type = 'infer';
+  return spec;
 }
 
 /** Collect all uploaded File objects from input nodes keyed by node id. */

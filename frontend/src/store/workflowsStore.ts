@@ -10,6 +10,7 @@ export interface Workflow {
   nodes: WorkflowNode[];
   edges: Edge[];
   trainedModels: string[];   // output model names saved by this workflow
+  sourceTrainingId?: string; // for deployment: ID of the training workflow it was imported from
   createdAt: number;
   updatedAt: number;
 }
@@ -19,6 +20,7 @@ interface WorkflowsState {
   currentWorkflowId: string | null;
 
   createWorkflow: (name: string, type: 'training' | 'deployment') => string;
+  createDeploymentFromTraining: (name: string, sourceTrainingId: string) => string | null;
   deleteWorkflow: (id: string) => void;
   renameWorkflow: (id: string, name: string) => void;
   setCurrentWorkflow: (id: string | null) => void;
@@ -43,6 +45,37 @@ export const useWorkflowsStore = create<WorkflowsState>()(
           nodes: [],
           edges: [],
           trainedModels: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((state) => ({
+          workflows: [...state.workflows, newWorkflow],
+          currentWorkflowId: id,
+        }));
+        return id;
+      },
+
+      createDeploymentFromTraining: (name, sourceTrainingId) => {
+        const source = get().workflows.find((w) => w.id === sourceTrainingId);
+        if (!source || source.trainedModels.length === 0) return null;
+
+        const id = uuidv4();
+        const now = Date.now();
+
+        // Copy nodes from training workflow, removing saveModel
+        const nodes = source.nodes.filter((n) => n.data.type !== 'saveModel');
+        // Remove edges to/from saveModel nodes
+        const saveIds = new Set(source.nodes.filter((n) => n.data.type === 'saveModel').map((n) => n.id));
+        const edges = source.edges.filter((e) => !saveIds.has(e.source) && !saveIds.has(e.target));
+
+        const newWorkflow: Workflow = {
+          id,
+          name,
+          type: 'deployment',
+          nodes,
+          edges,
+          trainedModels: [...source.trainedModels],
+          sourceTrainingId,
           createdAt: now,
           updatedAt: now,
         };

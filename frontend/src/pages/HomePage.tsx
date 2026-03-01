@@ -126,29 +126,21 @@ interface SectionProps {
   icon: React.ReactNode;
   accentColor: string;
   workflows: Workflow[];
-  type: 'training' | 'deployment';
   onEdit: (id: string) => void;
   onRun: (id: string) => void;
   onDelete: (id: string, e: React.MouseEvent) => void;
-  onNew: () => void;
-  showInput: boolean;
-  onToggleInput: () => void;
-  inputValue: string;
-  onInputChange: (v: string) => void;
-  onCreate: () => void;
-  onCancelInput: () => void;
+  newButton: React.ReactNode;
+  inputRow?: React.ReactNode;
 }
 
 const Section: React.FC<SectionProps> = ({
-  title, icon, accentColor, workflows, type,
-  onEdit, onRun, onDelete, onNew,
-  showInput, onToggleInput: _onToggleInput, inputValue, onInputChange, onCreate, onCancelInput,
+  title, icon, accentColor, workflows,
+  onEdit, onRun, onDelete, newButton, inputRow,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div className="mb-10">
-      {/* Section header */}
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => setCollapsed(!collapsed)}
@@ -162,53 +154,16 @@ const Section: React.FC<SectionProps> = ({
             : <ChevronDown  className="w-4 h-4 text-gray-500 ml-1" />
           }
         </button>
-        <button
-          onClick={onNew}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
-          style={{
-            backgroundColor: accentColor + '18',
-            borderColor: accentColor + '55',
-            color: accentColor,
-          }}
-        >
-          <Plus className="w-4 h-4" />
-          New {title.replace(' Workflows', '')}
-        </button>
+        {newButton}
       </div>
 
       {!collapsed && (
         <>
-          {/* New workflow input */}
-          {showInput && (
-            <div className="flex items-center gap-3 bg-[#12121a] border border-[#22222e] rounded-lg p-3 mb-3">
-              <input
-                type="text"
-                value={inputValue}
-                onChange={(e) => onInputChange(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && onCreate()}
-                placeholder={`${type === 'training' ? 'Training' : 'Deployment'} workflow name…`}
-                autoFocus
-                className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none w-64"
-                style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-              />
-              <button
-                onClick={onCreate}
-                className="px-4 py-2 rounded-md font-medium text-sm text-[#0a0a0f] transition-colors"
-                style={{ backgroundColor: accentColor }}
-              >
-                Create
-              </button>
-              <button onClick={onCancelInput} className="px-4 py-2 text-gray-400 hover:text-gray-200 transition-colors text-sm">
-                Cancel
-              </button>
-            </div>
-          )}
+          {inputRow}
 
-          {/* Workflow list */}
           {workflows.length === 0 ? (
             <div className="text-center py-8 text-gray-600 border border-dashed border-[#22222e] rounded-lg">
-              <p className="text-sm">No {type} workflows yet</p>
-              <p className="text-xs mt-1">Click "New {type === 'training' ? 'Training' : 'Deployment'}" to get started</p>
+              <p className="text-sm">No workflows yet</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -235,6 +190,7 @@ export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const workflows = useWorkflowsStore((s) => s.workflows);
   const createWorkflow = useWorkflowsStore((s) => s.createWorkflow);
+  const createDeploymentFromTraining = useWorkflowsStore((s) => s.createDeploymentFromTraining);
   const deleteWorkflow = useWorkflowsStore((s) => s.deleteWorkflow);
   const setCurrentWorkflow = useWorkflowsStore((s) => s.setCurrentWorkflow);
 
@@ -242,15 +198,24 @@ export const HomePage: React.FC = () => {
   const [showDeploymentInput, setShowDeploymentInput] = useState(false);
   const [trainingName, setTrainingName]               = useState('');
   const [deploymentName, setDeploymentName]           = useState('');
+  const [selectedTrainingId, setSelectedTrainingId]    = useState('');
 
   const trainingWorkflows   = workflows.filter((w) => w.type === 'training');
   const deploymentWorkflows = workflows.filter((w) => w.type === 'deployment');
+  const trainedWorkflows    = trainingWorkflows.filter((w) => w.trainedModels.length > 0);
 
-  const handleCreate = (type: 'training' | 'deployment', name: string) => {
-    if (!name.trim()) return;
-    const id = createWorkflow(name.trim(), type);
-    if (type === 'training') { setTrainingName(''); setShowTrainingInput(false); }
-    else { setDeploymentName(''); setShowDeploymentInput(false); }
+  const handleCreateTraining = () => {
+    if (!trainingName.trim()) return;
+    const id = createWorkflow(trainingName.trim(), 'training');
+    setTrainingName(''); setShowTrainingInput(false);
+    navigate(`/editor/${id}`);
+  };
+
+  const handleCreateDeployment = () => {
+    if (!deploymentName.trim() || !selectedTrainingId) return;
+    const id = createDeploymentFromTraining(deploymentName.trim(), selectedTrainingId);
+    if (!id) return;
+    setDeploymentName(''); setSelectedTrainingId(''); setShowDeploymentInput(false);
     navigate(`/editor/${id}`);
   };
 
@@ -283,40 +248,106 @@ export const HomePage: React.FC = () => {
         <div className="max-w-4xl mx-auto">
           <h2 className="text-2xl font-semibold text-gray-200 mb-8">Your Workflows</h2>
 
+          {/* Training Workflows */}
           <Section
             title="Training Workflows"
             icon={<Brain className="w-5 h-5" />}
             accentColor="#00d4ff"
             workflows={trainingWorkflows}
-            type="training"
             onEdit={handleEdit}
             onRun={handleRun}
             onDelete={handleDelete}
-            onNew={() => { setShowDeploymentInput(false); setShowTrainingInput(true); }}
-            showInput={showTrainingInput}
-            onToggleInput={() => setShowTrainingInput(!showTrainingInput)}
-            inputValue={trainingName}
-            onInputChange={setTrainingName}
-            onCreate={() => handleCreate('training', trainingName)}
-            onCancelInput={() => { setShowTrainingInput(false); setTrainingName(''); }}
+            newButton={
+              <button
+                onClick={() => { setShowDeploymentInput(false); setShowTrainingInput(true); }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors bg-[#00d4ff18] border-[#00d4ff55] text-[#00d4ff]"
+              >
+                <Plus className="w-4 h-4" />
+                New Training
+              </button>
+            }
+            inputRow={showTrainingInput ? (
+              <div className="flex items-center gap-3 bg-[#12121a] border border-[#22222e] rounded-lg p-3 mb-3">
+                <input
+                  type="text"
+                  value={trainingName}
+                  onChange={(e) => setTrainingName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateTraining()}
+                  placeholder="Training workflow name…"
+                  autoFocus
+                  className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none w-64"
+                />
+                <button
+                  onClick={handleCreateTraining}
+                  className="px-4 py-2 rounded-md font-medium text-sm text-[#0a0a0f] bg-[#00d4ff] transition-colors"
+                >
+                  Create
+                </button>
+                <button onClick={() => { setShowTrainingInput(false); setTrainingName(''); }} className="px-4 py-2 text-gray-400 hover:text-gray-200 transition-colors text-sm">
+                  Cancel
+                </button>
+              </div>
+            ) : undefined}
           />
 
+          {/* Deployment Workflows */}
           <Section
             title="Deployment Workflows"
             icon={<Rocket className="w-5 h-5" />}
             accentColor="#22c55e"
             workflows={deploymentWorkflows}
-            type="deployment"
             onEdit={handleEdit}
             onRun={handleRun}
             onDelete={handleDelete}
-            onNew={() => { setShowTrainingInput(false); setShowDeploymentInput(true); }}
-            showInput={showDeploymentInput}
-            onToggleInput={() => setShowDeploymentInput(!showDeploymentInput)}
-            inputValue={deploymentName}
-            onInputChange={setDeploymentName}
-            onCreate={() => handleCreate('deployment', deploymentName)}
-            onCancelInput={() => { setShowDeploymentInput(false); setDeploymentName(''); }}
+            newButton={
+              <button
+                onClick={() => { setShowTrainingInput(false); setShowDeploymentInput(true); }}
+                disabled={trainedWorkflows.length === 0}
+                title={trainedWorkflows.length === 0 ? 'Train a model first' : undefined}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  trainedWorkflows.length === 0
+                    ? 'bg-[#1a1a24] border-[#22222e] text-gray-600 cursor-not-allowed'
+                    : 'bg-[#22c55e18] border-[#22c55e55] text-[#22c55e]'
+                }`}
+              >
+                <Plus className="w-4 h-4" />
+                New Deployment
+              </button>
+            }
+            inputRow={showDeploymentInput ? (
+              <div className="flex items-center gap-3 bg-[#12121a] border border-[#22222e] rounded-lg p-3 mb-3 flex-wrap">
+                <select
+                  value={selectedTrainingId}
+                  onChange={(e) => setSelectedTrainingId(e.target.value)}
+                  className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none"
+                >
+                  <option value="">Select training workflow…</option>
+                  {trainedWorkflows.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.trainedModels.length} model{w.trainedModels.length !== 1 ? 's' : ''})
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={deploymentName}
+                  onChange={(e) => setDeploymentName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateDeployment()}
+                  placeholder="Deployment name…"
+                  className="bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none w-48"
+                />
+                <button
+                  onClick={handleCreateDeployment}
+                  disabled={!selectedTrainingId || !deploymentName.trim()}
+                  className="px-4 py-2 rounded-md font-medium text-sm text-[#0a0a0f] bg-[#22c55e] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Create
+                </button>
+                <button onClick={() => { setShowDeploymentInput(false); setDeploymentName(''); setSelectedTrainingId(''); }} className="px-4 py-2 text-gray-400 hover:text-gray-200 transition-colors text-sm">
+                  Cancel
+                </button>
+              </div>
+            ) : undefined}
           />
         </div>
       </div>

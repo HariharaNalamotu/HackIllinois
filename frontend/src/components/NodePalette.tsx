@@ -134,41 +134,19 @@ export const NodePalette: React.FC<{ mode?: WorkflowPaletteMode }> = ({ mode = '
   const outputDefs     = allDefs.filter((n) => n.category === 'output');
 
   // ── Deployment mode ────────────────────────────────────────────────────────
+  // Deployment workflows auto-import nodes from training. Only show LLM node to optionally add.
   if (mode === 'deployment') {
-    const deployProcessing = processingDefs.filter(
-      (n) => n.type === 'deployModelNode' || n.type === 'llmNode'
-    );
-    const deployOutput = outputDefs.filter((n) => n.type === 'deployOutputNode');
+    const deployExtra = processingDefs.filter((n) => n.type === 'llmNode');
 
     return (
       <div className="w-72 bg-[#12121a] border-r border-[#22222e] flex flex-col h-full">
         <div className="p-4 border-b border-[#22222e]">
           <h2 className="text-[#6366f1] text-sm font-semibold uppercase tracking-wider">Deployment Palette</h2>
-          <p className="text-gray-500 text-xs mt-1">Build your inference pipeline</p>
+          <p className="text-gray-500 text-xs mt-1">Pipeline imported from training. Optionally add LLM.</p>
         </div>
         <div className="flex-1 overflow-y-auto py-4">
-          <Category title="Input" icon={<CircleDot className="w-4 h-4 text-[#00d4ff]" />}>
-            {activeInput && (
-              <p className="text-[10px] text-amber-500/80 px-3 pb-1 italic">
-                Delete the active input node to switch type
-              </p>
-            )}
-            {inputDefs.map((def) => (
-              <PaletteNode
-                key={def.type}
-                definition={def}
-                disabled={!!activeInput && def.type !== activeInput}
-                disabledReason={activeInput ? `Remove the active ${activeInput.replace('Input', '')} input first` : ''}
-              />
-            ))}
-          </Category>
-          <Category title="Processing" icon={<Settings2 className="w-4 h-4 text-[#6366f1]" />}>
-            {deployProcessing.map((def) => (
-              <PaletteNode key={def.type} definition={def} />
-            ))}
-          </Category>
-          <Category title="Output" icon={<Save className="w-4 h-4 text-[#14b8a6]" />}>
-            {deployOutput.map((def) => (
+          <Category title="Add-ons" icon={<Settings2 className="w-4 h-4 text-[#6366f1]" />}>
+            {deployExtra.map((def) => (
               <PaletteNode key={def.type} definition={def} />
             ))}
           </Category>

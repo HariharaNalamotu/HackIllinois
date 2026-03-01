@@ -120,7 +120,7 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
       return { chunkSize: 512, overlap: 64 };
 
     case 'embeddingModel':
-      return { model: 'all-MiniLM-L6-v2', fineTune: false, method: 'simcse', epochs: 3, learningRate: 3e-5, outputName: '' };
+      return { model: 'all-MiniLM-L6-v2', fineTune: true, method: 'simcse', epochs: 3, learningRate: 3e-5, outputName: '' };
 
     // Embedding variants
     case 'embeddingMiniLM':
@@ -128,7 +128,7 @@ const getDefaultParameters = (type: NodeType): Record<string, unknown> => {
     case 'embeddingBGESmall':
     case 'embeddingBGEBase':
     case 'embeddingMultilingual':
-      return { fineTune: false, method: 'simcse', epochs: 3, learningRate: 3e-5, outputName: '' };
+      return { fineTune: true, method: 'simcse', epochs: 3, learningRate: 3e-5, outputName: '' };
 
     case 'imageClassifier':
       return { baseModel: 'resnet-50', transfer: true, numClasses: 2, epochs: 10, batchSize: 32, learningRate: 1e-3, outputName: '' };
