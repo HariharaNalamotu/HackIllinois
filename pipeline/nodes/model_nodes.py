@@ -51,25 +51,35 @@ def _save_to_volume(src_dir: str, model_name: str, models_dir: str, log: Callabl
 
 
 def _upload_to_r2(model_dir: str, r2_prefix: str, r2_config: dict, log: Callable) -> list[str]:
-    """Upload model directory to Cloudflare R2."""
+    """Upload model directory to Cloudflare R2. Non-fatal — logs warnings on failure."""
     if not all(r2_config.get(k) for k in ("endpoint", "key_id", "secret", "bucket")):
         log("[WARN] R2 config incomplete — skipping R2 upload.")
         return []
-    import boto3
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=r2_config["endpoint"],
-        aws_access_key_id=r2_config["key_id"],
-        aws_secret_access_key=r2_config["secret"],
-    )
-    uploaded: list[str] = []
-    for root, _, fnames in os.walk(model_dir):
-        for fname in fnames:
-            local = os.path.join(root, fname)
-            key   = f"{r2_prefix}/{os.path.relpath(local, model_dir)}"
-            s3.upload_file(local, r2_config["bucket"], key)
-            uploaded.append(key)
-    log(f"Uploaded {len(uploaded)} files to R2 ({r2_prefix})")
+    try:
+        import boto3
+        from botocore.config import Config as BotoConfig
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=r2_config["endpoint"],
+            aws_access_key_id=r2_config["key_id"],
+            aws_secret_access_key=r2_config["secret"],
+            config=BotoConfig(
+                signature_version="s3v4",
+                retries={"max_attempts": 2},
+            ),
+            verify=False,  # R2 custom endpoint — skip SSL verification from Modal containers
+        )
+        uploaded: list[str] = []
+        for root, _, fnames in os.walk(model_dir):
+            for fname in fnames:
+                local = os.path.join(root, fname)
+                key   = f"{r2_prefix}/{os.path.relpath(local, model_dir)}"
+                s3.upload_file(local, r2_config["bucket"], key)
+                uploaded.append(key)
+        log(f"Uploaded {len(uploaded)} files to R2 ({r2_prefix})")
+    except Exception as e:
+        log(f"[WARN] R2 upload failed (model saved to volume only): {e}")
+        return []
     return uploaded
 
 
@@ -164,7 +174,7 @@ class TextModelNode(BaseNode):
         if not chunks:
             raise ValueError("TextModelNode (train): no chunks/texts to train on.")
 
-        base_model  = self.p("base_model", "all-MiniLM-L6-v2")
+        base_model  = self.p("base_model", "sentence-transformers/all-MiniLM-L6-v2")
         output_name = self.p("output_name", f"text-model-{ctx['job_id'][:8]}")
         workspace   = ctx["workspace"]
         models_dir  = ctx["models_dir"]
@@ -235,7 +245,7 @@ class TextModelNode(BaseNode):
             raise ValueError("TextModelNode (infer): needs chunks or text input.")
 
         query_texts = inp.get("chunks") or inp.get("texts", [])
-        base_model  = self.p("base_model", "all-MiniLM-L6-v2")
+        base_model  = self.p("base_model", "sentence-transformers/all-MiniLM-L6-v2")
         top_k       = int(self.p("top_k", 5))
         output_name = self.p("output_name", base_model)
         wf_prefix   = ctx.get("workflow_id") or "global"

@@ -24,8 +24,13 @@ _INPUT_ACCEPTS: dict[str, set[str]] = {
     NodeType.TEXT_MODEL:        {"chunks", "text"},
     NodeType.CNN_MODEL:         {"image"},
     NodeType.RNN_MODEL:         {"chunks", "text"},
+    NodeType.OBJECT_DETECT_MODEL: {"image"},
+    NodeType.AUDIO_MODEL:       {"audio"},
+    NodeType.AUDIO_CNN:         {"audio"},
+    NodeType.IMAGE_CAE:         {"image"},
+    NodeType.TABULAR_MODEL:     {"tabular"},
     NodeType.MODEL_SAVE:        {"model"},
-    NodeType.INFER_OUTPUT:      {"model"},
+    NodeType.INFER_OUTPUT:      {"infer_out", "text", "image", "audio", "tabular", "chunks", "model"},
     NodeType.API_OUTPUT:        {"model", "infer_out"},
 }
 

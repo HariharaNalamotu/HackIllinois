@@ -63,26 +63,32 @@ class InferOutputNode(BaseNode):
         ctx: dict[str, Any],
         log: Callable[[str], None],
     ) -> NodeOutput:
+        if not inputs:
+            raise ValueError("InferOutputNode: no input received.")
+
+        # Accept infer_out with predictions (from model nodes)
         inp = self.first_of_type(inputs, "infer_out")
-        if inp is None:
-            raise ValueError("InferOutputNode: requires an infer_out input.")
+        if inp is not None:
+            top_k       = int(self.p("top_k", 5))
+            predictions = inp.get("predictions", [])
+            trimmed = []
+            for pred in predictions:
+                if isinstance(pred, dict) and "results" in pred:
+                    pred = {**pred, "results": pred["results"][:top_k]}
+                trimmed.append(pred)
+            log(f"  [InferOutput] {len(trimmed)} predictions returned")
+            return {
+                "type":        "infer_out",
+                "predictions": trimmed,
+                "total":       len(trimmed),
+            }
 
-        top_k       = int(self.p("top_k", 5))
-        predictions = inp.get("predictions", [])
-
-        # Trim each result set to top_k
-        trimmed = []
-        for pred in predictions:
-            if isinstance(pred, dict) and "results" in pred:
-                pred = {**pred, "results": pred["results"][:top_k]}
-            trimmed.append(pred)
-
-        log(f"  [InferOutput] {len(trimmed)} predictions returned")
-
+        # Accept any other input type — pass through as result
+        inp = inputs[0]
+        log(f"  [InferOutput] pass-through input type='{inp.get('type')}'")
         return {
             "type":        "infer_out",
-            "predictions": trimmed,
-            "total":       len(trimmed),
+            "result":      inp,
         }
 
 

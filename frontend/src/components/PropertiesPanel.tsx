@@ -18,7 +18,9 @@ import {
   LLM_PROVIDERS,
 } from '../types/nodes';
 
-const WORKER_BASE = 'https://hackillinois-api.harihara-nalamotu.workers.dev';
+import { getStoredBackendUrl } from './SettingsModal';
+
+const getWorkerBase = () => getStoredBackendUrl();
 
 // ── Reusable primitives ───────────────────────────────────────────────────────
 
@@ -164,6 +166,21 @@ const FolderUploadButton: React.FC<{ onFiles: (files: FileList) => void }> = ({ 
   );
 };
 
+/** Convert a FileList to File[] for storage in Zustand. */
+function fileListToArray(fl: FileList): globalThis.File[] {
+  const arr: globalThis.File[] = [];
+  for (let i = 0; i < fl.length; i++) arr.push(fl[i]);
+  return arr;
+}
+
+/** Display label for uploadedFiles (could be File[], FileList, or legacy string). */
+function filesLabel(v: unknown): string {
+  if (Array.isArray(v)) return `${v.length} file(s) selected`;
+  if (v instanceof FileList) return `${v.length} file(s) selected`;
+  if (typeof v === 'string') return v;
+  return 'File selected';
+}
+
 const Section: React.FC<{ title: string }> = ({ title }) => (
   <div className="border-t border-[#22222e] pt-4">
     <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">{title}</p>
@@ -224,7 +241,7 @@ const TextInputForm: React.FC = () => {
             <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
               <File className="w-4 h-4 text-[#00d4ff]" />
               <span className="text-sm text-gray-300 flex-1 truncate">
-                {p.uploadedFiles as string}
+                {filesLabel(p.uploadedFiles)}
               </span>
               <button
                 onClick={() => update(node.id, { uploadedFiles: null })}
@@ -244,7 +261,7 @@ const TextInputForm: React.FC = () => {
                 onChange={(e) => {
                   if (e.target.files?.length)
                     update(node.id, {
-                      uploadedFiles: `${e.target.files.length} file(s) selected`,
+                      uploadedFiles: fileListToArray(e.target.files),
                     });
                 }}
               />
@@ -257,7 +274,7 @@ const TextInputForm: React.FC = () => {
               </button>
               <FolderUploadButton
                 onFiles={(files) =>
-                  update(node.id, { uploadedFiles: `${files.length} file(s) from folder` })
+                  update(node.id, { uploadedFiles: fileListToArray(files) })
                 }
               />
             </>
@@ -283,7 +300,7 @@ const ImageInputForm: React.FC = () => {
     (files: FileList) => {
       const detected = detectImageFormat(files);
       update(node.id, {
-        uploadedFiles: `${files.length} file(s) selected`,
+        uploadedFiles: fileListToArray(files),
         detectedFormat: detected,
         imageFormat: detected,
       });
@@ -314,7 +331,7 @@ const ImageInputForm: React.FC = () => {
               <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
                 <File className="w-4 h-4" style={{ color: badge.color }} />
                 <span className="text-sm text-gray-300 flex-1 truncate">
-                  {p.uploadedFiles as string}
+                  {filesLabel(p.uploadedFiles)}
                 </span>
                 <button
                   onClick={() =>
@@ -387,7 +404,7 @@ const AudioInputForm: React.FC = () => {
             <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
               <File className="w-4 h-4 text-[#22c55e]" />
               <span className="text-sm text-gray-300 flex-1 truncate">
-                {p.uploadedFiles as string}
+                {filesLabel(p.uploadedFiles)}
               </span>
               <button
                 onClick={() => update(node.id, { uploadedFiles: null })}
@@ -407,7 +424,7 @@ const AudioInputForm: React.FC = () => {
                 onChange={(e) => {
                   if (e.target.files?.length)
                     update(node.id, {
-                      uploadedFiles: `${e.target.files.length} file(s) selected`,
+                      uploadedFiles: fileListToArray(e.target.files),
                     });
                 }}
               />
@@ -420,7 +437,7 @@ const AudioInputForm: React.FC = () => {
               </button>
               <FolderUploadButton
                 onFiles={(files) =>
-                  update(node.id, { uploadedFiles: `${files.length} file(s) from folder` })
+                  update(node.id, { uploadedFiles: fileListToArray(files) })
                 }
               />
             </>
@@ -456,7 +473,7 @@ const SpreadsheetInputForm: React.FC = () => {
             <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2">
               <File className="w-4 h-4 text-[#f97316]" />
               <span className="text-sm text-gray-300 flex-1 truncate">
-                {p.uploadedFiles as string}
+                {filesLabel(p.uploadedFiles)}
               </span>
               <button
                 onClick={() => update(node.id, { uploadedFiles: null })}
@@ -476,7 +493,7 @@ const SpreadsheetInputForm: React.FC = () => {
                 onChange={(e) => {
                   if (e.target.files?.length)
                     update(node.id, {
-                      uploadedFiles: `${e.target.files.length} file(s) selected`,
+                      uploadedFiles: fileListToArray(e.target.files),
                     });
                 }}
               />
@@ -1168,7 +1185,7 @@ const DeployOutputNodeForm: React.FC = () => {
   const { id: workflowId } = useParams<{ id: string }>();
   const [copied, setCopied] = useState(false);
 
-  const endpointUrl = `${WORKER_BASE}/api/deploy/${workflowId ?? ':workflowId'}`;
+  const endpointUrl = `${getWorkerBase()}/api/deploy/${workflowId ?? ':workflowId'}`;
   const curlSnippet = `curl -X POST ${endpointUrl} \\\n  -F "file=@/path/to/input"`;
 
   const copyToClipboard = async () => {

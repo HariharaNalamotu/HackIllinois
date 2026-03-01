@@ -1,5 +1,6 @@
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
@@ -7,10 +8,12 @@ from pydantic import BaseModel, Field
 
 GRPC_ADDR = "127.0.0.1:50051"
 
-CREATE = "vdss.VDSSService/CreateCollection"
-UPSERT = "vdss.VDSSService/BatchUpsert"
-SEARCH = "vdss.VDSSService/Search"
-HEALTH = "vdss.VDSSService/HealthCheck"
+CREATE     = "vdss.VDSSService/CreateCollection"
+UPSERT     = "vdss.VDSSService/BatchUpsert"
+SEARCH     = "vdss.VDSSService/Search"
+HEALTH     = "vdss.VDSSService/HealthCheck"
+GET_VECTOR = "vdss.VDSSService/GetVector"
+GET_COUNT  = "vdss.VDSSService/GetVectorCount"
 
 # Enums you discovered (grpcurl accepts enum NAMES in JSON too)
 # IndexDriver: FAISS
@@ -141,6 +144,49 @@ def batch_upsert(req: UpsertReq):
         "payloads": payloads,
     }
     return grpc_call(UPSERT, payload)
+
+
+@app.get("/count/{collection}")
+def get_vector_count(collection: str):
+    """Return the number of vectors stored in a collection."""
+    result = grpc_call(GET_COUNT, {"collection_name": collection})
+    return {"collection": collection, "count": int(result.get("count", 0))}
+
+
+@app.get("/scan/{collection}")
+def scan_collection(collection: str, limit: int = 10000):
+    """
+    Retrieve all chunk texts from a collection by fetching vectors by sequential integer ID.
+    Chunks are stored with IDs 0..N-1 during upsert. Used by Modal at training time
+    so text data lives in Actian (not R2) and Modal reads from Actian.
+    """
+    count_result = grpc_call(GET_COUNT, {"collection_name": collection})
+    total = min(int(count_result.get("count", 0)), limit)
+
+    if total == 0:
+        return {"collection": collection, "count": 0, "texts": []}
+
+    def fetch_one(i: int):
+        try:
+            result = grpc_call(GET_VECTOR, {
+                "collection_name": collection,
+                "vector_id": {"u64_id": i},
+            })
+            payload_json = result.get("payload", {}).get("json", "{}")
+            payload = json.loads(payload_json) if payload_json else {}
+            return i, payload.get("text", "")
+        except Exception:
+            return i, ""
+
+    results: Dict[int, str] = {}
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(fetch_one, i): i for i in range(total)}
+        for future in as_completed(futures):
+            i, text = future.result()
+            results[i] = text
+
+    texts = [results[i] for i in range(total) if results.get(i)]
+    return {"collection": collection, "count": len(texts), "texts": texts}
 
 
 @app.post("/search")

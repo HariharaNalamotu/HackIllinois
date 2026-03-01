@@ -38,6 +38,15 @@ class TextInputNode(BaseNode):
         ctx: dict[str, Any],
         log: Callable[[str], None],
     ) -> NodeOutput:
+        # Prefer pre-fetched chunks (passed directly or from Actian).
+        all_chunk_keys = list(ctx.get("text_chunks", {}).keys())
+        log(f"  [TextInput] node {self.id}: text_chunks keys={all_chunk_keys}, files={files}")
+        pre_chunks: list[str] = ctx.get("text_chunks", {}).get(self.id, [])
+        if pre_chunks:
+            log(f"  [TextInput] {len(pre_chunks)} chunks for node {self.id}")
+            return {"type": "text", "texts": pre_chunks, "filenames": ["chunks"]}
+
+        # Fallback: read from uploaded files (used when files are sent directly to /train)
         import sys
         sys.path.insert(0, "/app")  # chunk.py is mounted here in Modal
         from chunk import read_file  # type: ignore[import]

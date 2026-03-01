@@ -194,6 +194,8 @@ function EditorHeader({
     try {
       const pipelineSpec = buildPipelineSpec(nodes, edges, 'train');
       const files = collectFiles(nodes);
+      console.log('[handleTrain] collectFiles returned:', files.length, 'files', files.map(f => `${f.nodeId}:${f.file.name}(${f.file.size}b)`));
+      console.log('[handleTrain] nodes uploadedFiles:', nodes.map(n => ({ id: n.id, type: n.data.type, uploadedFiles: n.data.parameters.uploadedFiles, uploadedFilesType: typeof n.data.parameters.uploadedFiles })));
       const { job_id } = await submitTrainingJob(workflowId, pipelineSpec, files);
       setTrainingJobId(job_id);
     } catch (err: any) {

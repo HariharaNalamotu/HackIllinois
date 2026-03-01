@@ -14,6 +14,7 @@ vdss_client/*_pb2*.py
 worker/node_modules/
 worker/dist/
 worker/.wrangler/
+worker/.dev.vars
 
 # Actian-worker (local dev copy)
 actian-worker/node_modules/
@@ -22,3 +23,4 @@ actian-cf/__pycache__/
 # Cloudflare wrangler state
 .wrangler/
 cloudflare/
+

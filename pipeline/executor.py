@@ -54,6 +54,7 @@ def execute_pipeline(
     actian_url: str,
     r2_config: dict | None = None,
     workflow_id: str = "",
+    text_chunks: dict | None = None,     # node_id -> list of pre-fetched chunk strings (from Actian)
 ) -> dict[str, Any]:
     """
     Execute a validated PipelineSpec.
@@ -95,6 +96,7 @@ def execute_pipeline(
             "actian_url":    actian_url,
             "r2_config":     r2_config or {},
             "pipeline_type": spec.pipeline_type,
+            "text_chunks":   text_chunks or {},   # node_id → pre-fetched chunk texts from Actian
         }
 
         for node_spec in order:

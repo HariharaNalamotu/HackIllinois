@@ -34,7 +34,7 @@ from pathlib import Path
 
 import modal
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 # ── Infrastructure ────────────────────────────────────────────────────────────
 app = modal.App("hackillinois-pipeline")
@@ -98,6 +98,15 @@ def _log(job_id: str, msg: str, done: bool = False) -> None:
     _log_store[job_id] = existing
 
 
+def _is_authorized(request: Request) -> bool:
+    """Validate Worker->Modal shared secret if configured."""
+    expected = (os.environ.get("MODAL_SECRET") or "").strip()
+    if not expected:
+        return True
+    provided = (request.headers.get("x-modal-secret") or "").strip()
+    return provided == expected
+
+
 # ── GPU training function (internal, not a web endpoint) ──────────────────────
 @app.function(
     image=_image,
@@ -107,15 +116,20 @@ def _log(job_id: str, msg: str, done: bool = False) -> None:
     secrets=[modal.Secret.from_name("hackillinois-secrets")],
 )
 def _gpu_train(
-    job_id:      str,
-    spec_dict:   dict,
-    files:       dict,       # node_id → list of base64 strings
-    file_names:  dict,       # node_id → list of file names
-    r2_config:   dict,
-    actian_url:  str,
-    workflow_id: str = "",
+    job_id:               str,
+    spec_dict:            dict,
+    files:                dict,              # node_id → list of base64 strings (legacy / fallback)
+    file_names:           dict,              # node_id → list of file names
+    r2_config:            dict,
+    actian_url:           str,
+    workflow_id:          str  = "",
+    r2_keys:              dict | None = None,  # node_id → list of R2 object keys (image/audio/tabular)
+    actian_collections:   dict | None = None,  # node_id → Actian collection name (legacy)
+    text_chunks_direct:   dict | None = None,  # node_id → list of raw chunk strings (new path)
 ) -> dict:
     """Execute a training pipeline on GPU. Called by the /train endpoint."""
+    import httpx
+
     sys.path.insert(0, "/app")
     from pipeline.types import PipelineSpec       # type: ignore[import]
     from pipeline.executor import execute_pipeline # type: ignore[import]
@@ -123,10 +137,59 @@ def _gpu_train(
     log = lambda msg: _log(job_id, msg)
     log(f"GPU pipeline starting — job {job_id}")
 
-    decoded_files = {
+    # Start from any base64 files passed directly (legacy/fallback path)
+    decoded_files: dict[str, list[bytes]] = {
         nid: [base64.b64decode(b) for b in blobs]
         for nid, blobs in files.items()
     }
+
+    # ── Binary nodes: download files from R2 ─────────────────────────────────
+    if r2_keys and r2_config.get("endpoint"):
+        import boto3
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=r2_config["endpoint"],
+            aws_access_key_id=r2_config["key_id"],
+            aws_secret_access_key=r2_config["secret"],
+            verify=False,
+        )
+        for node_id, keys in r2_keys.items():
+            for key in keys:
+                try:
+                    obj  = s3.get_object(Bucket=r2_config["bucket"], Key=key)
+                    data = obj["Body"].read()
+                    decoded_files.setdefault(node_id, []).append(data)
+                    file_names.setdefault(node_id, []).append(key.split("/")[-1])
+                    log(f"R2 download: {key} ({len(data)} bytes) → node {node_id}")
+                except Exception as e:
+                    log(f"[WARN] R2 download failed {key}: {e}")
+
+    # ── Text nodes: load chunk texts ──────────────────────────────────────────
+    text_chunks: dict[str, list[str]] = {}
+
+    # Primary path: raw chunks passed directly from the Worker (no pre-embedding)
+    if text_chunks_direct:
+        for node_id, chunks in text_chunks_direct.items():
+            if chunks:  # skip empty lists
+                text_chunks[node_id] = chunks
+                log(f"Direct chunks: {len(chunks)} chunks → node {node_id}")
+            else:
+                log(f"[WARN] text_chunks_direct[{node_id}] is empty, skipping")
+
+    # Legacy/fallback path: chunks were pre-embedded in Actian at upload time
+    for node_id, collection in (actian_collections or {}).items():
+        if node_id in text_chunks:
+            continue  # already have direct chunks for this node
+        try:
+            resp = httpx.get(f"{actian_url}/scan/{collection}?limit=100000", timeout=120)
+            if resp.is_success:
+                texts = resp.json().get("texts", [])
+                text_chunks[node_id] = texts
+                log(f"Actian scan: {len(texts)} chunks from '{collection}' → node {node_id}")
+            else:
+                log(f"[WARN] Actian scan failed for '{collection}': {resp.text[:200]}")
+        except Exception as e:
+            log(f"[WARN] Actian scan error for '{collection}': {e}")
 
     spec = PipelineSpec.from_dict(spec_dict)
     try:
@@ -140,6 +203,7 @@ def _gpu_train(
             actian_url=actian_url,
             r2_config=r2_config,
             workflow_id=workflow_id,
+            text_chunks=text_chunks,
         )
         models_volume.commit()
         _job_store[job_id] = {"status": "complete", "result": result}
@@ -166,12 +230,16 @@ def _gpu_train(
 )
 @modal.web_endpoint(method="POST", label="chunk")
 async def chunk_endpoint(
+    request: Request,
     file: UploadFile = File(...),
     method: str       = Form(default="auto"),
     method_params: str= Form(default="{}"),
     preview_limit: int= Form(default=10),
 ):
     """Chunk an uploaded file and return a preview. Called by the CF Worker."""
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     import inspect
     import tempfile
 
@@ -192,7 +260,11 @@ async def chunk_endpoint(
             return {"error": "Could not extract usable text."}, 400
 
         if method == "auto":
-            chosen, chosen_params = agent_choose_chunker(tmp_path, text[:3000])
+            try:
+                chosen, chosen_params = agent_choose_chunker(tmp_path, text[:3000])
+            except Exception as e:
+                print(f"[chunk] agent_choose_chunker failed ({e}), falling back to 'sentence'")
+                chosen, chosen_params = "sentence", {}
         else:
             if method not in CHUNKERS:
                 return {"error": f"Unknown method '{method}'."}, 400
@@ -234,6 +306,9 @@ async def train_endpoint(request: Request):
     Generates the training script inside the GPU function and
     spawns it asynchronously. Returns job_id immediately (202).
     """
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     sys.path.insert(0, "/app")
     from pipeline.types import PipelineSpec  # type: ignore[import]
 
@@ -263,7 +338,7 @@ async def train_endpoint(request: Request):
                      os.environ.get("ACTIAN_HTTP_URL",
                                     "https://actian-http-gate.harihara-nalamotu.workers.dev"))
 
-    # Collect uploaded files (multipart fields named files[<node_id>])
+    # Collect uploaded files (legacy/fallback — files[<node_id>])
     files_b64:  dict[str, list[str]] = {}
     file_names: dict[str, list[str]] = {}
     for key, value in form.multi_items():
@@ -274,6 +349,30 @@ async def train_endpoint(request: Request):
             data = await value.read()
             files_b64.setdefault(node_id, []).append(base64.b64encode(data).decode())
             file_names.setdefault(node_id, []).append(value.filename or "upload")
+
+    # R2 keys for binary nodes (image/audio/tabular) — stored in R2 before training
+    r2_keys: dict[str, list[str]] = {}
+    for key, value in form.multi_items():
+        if key.startswith("r2_keys[") and key.endswith("]"):
+            node_id = key[8:-1]
+            r2_keys.setdefault(node_id, []).append(str(value))
+
+    # Actian collection names for text nodes — legacy path (pre-embedded at upload time)
+    actian_collections: dict[str, str] = {}
+    for key, value in form.multi_items():
+        if key.startswith("actian_collections[") and key.endswith("]"):
+            node_id = key[19:-1]
+            actian_collections[node_id] = str(value)
+
+    # Raw text chunks passed directly from Worker (new path — fine-tune first, then embed)
+    text_chunks_direct: dict[str, list[str]] = {}
+    for key, value in form.multi_items():
+        if key.startswith("text_chunks[") and key.endswith("]"):
+            node_id = key[12:-1]
+            try:
+                text_chunks_direct[node_id] = json.loads(str(value))
+            except Exception:
+                pass
 
     workflow_id = str(form.get("workflow_id") or "")
 
@@ -286,6 +385,9 @@ async def train_endpoint(request: Request):
         r2_config=r2_config,
         actian_url=actian_url,
         workflow_id=workflow_id,
+        r2_keys=r2_keys,
+        actian_collections=actian_collections,
+        text_chunks_direct=text_chunks_direct,
     )
 
     modal_call_id = getattr(call, "object_id", getattr(call, "function_call_id", job_id))
@@ -305,6 +407,9 @@ async def train_endpoint(request: Request):
 @modal.web_endpoint(method="POST", label="infer")
 async def infer_endpoint(request: Request):
     """Run an inference pipeline synchronously on CPU. Returns results directly."""
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     sys.path.insert(0, "/app")
     from pipeline.types import PipelineSpec      # type: ignore[import]
     from pipeline.executor import execute_pipeline  # type: ignore[import]
@@ -351,14 +456,61 @@ async def infer_endpoint(request: Request):
     return {**result, "job_id": job_id, "logs": logs}
 
 
+# ── /embed-store — embed chunks and store in Actian (called during file upload) ──
+@app.function(
+    image=_image,
+    volumes={str(MODELS_DIR.parent): models_volume},
+    timeout=300,
+    secrets=[modal.Secret.from_name("hackillinois-secrets")],
+)
+@modal.web_endpoint(method="POST", label="embed-store")
+async def embed_store_endpoint(request: Request):
+    """
+    Embed text chunks with the default MiniLM model and store them in Actian.
+    Called by the Worker during file upload for text_input nodes, so text data
+    lives in Actian (not R2) and Modal reads from Actian at training time.
+
+    Body JSON:
+      chunks      list[str]  — pre-chunked texts to embed
+      collection  str        — Actian collection name (e.g. wf_<id>_<nodeId>_chunks)
+      actian_url  str        — Actian HTTP gateway URL
+      model_id    str        — model folder in /vol/models (default: all-MiniLM-L6-v2)
+    """
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    sys.path.insert(0, "/app")
+    from pipeline.nodes.model_nodes import _upload_embeddings_to_actian  # type: ignore[import]
+
+    body       = await request.json()
+    chunks     = body.get("chunks", [])
+    collection = body.get("collection", "")
+    actian_url = body.get("actian_url") or os.environ.get(
+        "ACTIAN_HTTP_URL", "https://actian-http-gate.harihara-nalamotu.workers.dev"
+    )
+    model_id   = body.get("model_id", "all-MiniLM-L6-v2")
+
+    if not chunks or not collection:
+        return {"error": "chunks and collection are required"}, 400
+
+    model_path = str(MODELS_DIR / model_id)
+    log = lambda msg: print(msg, flush=True)
+
+    count = _upload_embeddings_to_actian(chunks, model_path, collection, actian_url, log)
+    return {"collection": collection, "vectors_stored": count, "total_chunks": len(chunks)}
+
+
 # ── /job-status — poll a training job ────────────────────────────────────────
 @app.function(image=_image, timeout=30)
 @modal.web_endpoint(method="GET", label="job-status")
-def job_status_endpoint(job_id: str):
+def job_status_endpoint(request: Request, job_id: str):
     """
     Query param: ?job_id=<id>
     Returns the job status dict.
     """
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     stored = _job_store.get(job_id)
     if not stored:
         return {"status": "not_found"}
@@ -384,11 +536,14 @@ def job_status_endpoint(job_id: str):
 # ── /job-logs — SSE log stream ────────────────────────────────────────────────
 @app.function(image=_image, timeout=3600)
 @modal.web_endpoint(method="GET", label="job-logs")
-def job_logs_endpoint(job_id: str):
+def job_logs_endpoint(request: Request, job_id: str):
     """
     Query param: ?job_id=<id>
     Returns a Server-Sent Events stream of log messages.
     """
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     def _generate():
         cursor   = 0
         deadline = time.time() + 3600
@@ -430,6 +585,9 @@ async def search_endpoint(request: Request):
       top_k       int     — results (default 10)
       with_payload bool   — include payloads (default true)
     """
+    if not _is_authorized(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     import httpx
     import torch
     import torch.nn.functional as F

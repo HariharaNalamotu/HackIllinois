@@ -147,8 +147,6 @@ export async function healthCheck(): Promise<boolean> {
 
 // ── Training pipeline API ─────────────────────────────────────────────────────
 
-const WORKER_BASE = 'https://hackillinois-api.harihara-nalamotu.workers.dev';
-
 /** Submit a training job. Returns the job_id. */
 export async function submitTrainingJob(
   workflowId: string,
@@ -162,7 +160,7 @@ export async function submitTrainingJob(
     fd.append(`files[${nodeId}]`, file, file.name);
   }
 
-  const res = await fetch(`${WORKER_BASE}/api/workflow/${workflowId}/train`, {
+  const res = await fetch(`${getBaseUrl()}/api/workflow/${workflowId}/train`, {
     method: 'POST',
     body: fd,
   });
@@ -181,7 +179,7 @@ export async function pollJobStatus(jobId: string): Promise<{
   result?: unknown;
   error?: string;
 }> {
-  const res = await fetch(`${WORKER_BASE}/api/pipeline/${jobId}/status`);
+  const res = await fetch(`${getBaseUrl()}/api/pipeline/${jobId}/status`);
   if (!res.ok) return { status: 'not_found' };
   return res.json();
 }
@@ -195,7 +193,7 @@ export function streamJobLogs(
   onLog: (line: string) => void,
   onDone: (result?: unknown) => void
 ): () => void {
-  const url = `${WORKER_BASE}/api/pipeline/${jobId}/logs`;
+  const url = `${getBaseUrl()}/api/pipeline/${jobId}/logs`;
   const es  = new EventSource(url);
 
   es.onmessage = (e) => {
@@ -223,7 +221,7 @@ export function streamJobLogs(
 
 /** Download a trained model as a tar archive (triggers browser download). */
 export async function downloadModel(modelName: string): Promise<void> {
-  const res = await fetch(`${WORKER_BASE}/api/models/${encodeURIComponent(modelName)}/download`);
+  const res = await fetch(`${getBaseUrl()}/api/models/${encodeURIComponent(modelName)}/download`);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
 
   const blob = await res.blob();
@@ -240,31 +238,27 @@ export async function downloadModel(modelName: string): Promise<void> {
 /** Run inference via the deployment endpoint. */
 export async function runInference(
   workflowId: string,
-  inputData: string | File | File[]
+  inputData: string | File | File[],
+  pipelineSpec?: { pipeline_type: string; nodes: unknown[]; edges: unknown[] }
 ): Promise<{ result: unknown; llmResponse?: string }> {
-  let body: FormData | string;
-  let contentType: string | undefined;
+  // Always use FormData so we can include pipeline spec alongside input
+  const fd = new FormData();
 
-  if (typeof inputData === 'string') {
-    body        = inputData;
-    contentType = 'text/plain';
-  } else if (inputData instanceof File) {
-    const fd = new FormData();
-    fd.append('file', inputData, inputData.name);
-    body = fd;
-  } else {
-    const fd = new FormData();
-    for (const f of inputData) fd.append('files[]', f, f.name);
-    body = fd;
+  if (pipelineSpec) {
+    fd.set('pipeline', JSON.stringify(pipelineSpec));
   }
 
-  const headers: Record<string, string> = {};
-  if (contentType) headers['Content-Type'] = contentType;
+  if (typeof inputData === 'string') {
+    fd.set('input_text', inputData);
+  } else if (inputData instanceof File) {
+    fd.append('file', inputData, inputData.name);
+  } else {
+    for (const f of inputData) fd.append('files[]', f, f.name);
+  }
 
-  const res = await fetch(`${WORKER_BASE}/api/deploy/${workflowId}`, {
+  const res = await fetch(`${getBaseUrl()}/api/deploy/${workflowId}`, {
     method: 'POST',
-    headers,
-    body,
+    body: fd,
   });
   if (!res.ok) {
     const err = await res.text();
@@ -281,7 +275,7 @@ export async function sendLLMChat(
   ollamaUrl?: string,
   systemPrompt?: string
 ): Promise<{ content: string }> {
-  const res = await fetch(`${WORKER_BASE}/api/llm/chat`, {
+  const res = await fetch(`${getBaseUrl()}/api/llm/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, model, messages, ollamaUrl, systemPrompt }),

@@ -3,9 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Zap, Copy, CheckCircle } from 'lucide-react';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { runInference } from '../services/api';
+import { buildPipelineSpec } from '../utils/pipelineBuilder';
 import type { InputNodeType } from '../store/workflowStore';
 
-const WORKER_BASE = 'https://hackillinois-api.harihara-nalamotu.workers.dev';
+import { getStoredBackendUrl } from '../components/SettingsModal';
+
+const getWorkerBase = () => getStoredBackendUrl();
 
 // ── Result display ─────────────────────────────────────────────────────────────
 
@@ -195,7 +198,7 @@ export const InferencePage: React.FC = () => {
     .map((n) => n.data.type as string)
     .find((t) => inputTypes.includes(t as InputNodeType)) as InputNodeType | undefined;
 
-  const endpointUrl = `${WORKER_BASE}/api/deploy/${workflowId}`;
+  const endpointUrl = `${getWorkerBase()}/api/deploy/${workflowId}`;
 
   const submit = async (inputData: string | File | File[]) => {
     setLoading(true);
@@ -203,7 +206,10 @@ export const InferencePage: React.FC = () => {
     setResult(null);
     setLlmResponse(undefined);
     try {
-      const res = await runInference(workflowId, inputData);
+      // Build infer pipeline spec from workflow nodes/edges
+      const edges = workflow.edges || [];
+      const pipelineSpec = buildPipelineSpec(workflow.nodes, edges, 'infer');
+      const res = await runInference(workflowId, inputData, pipelineSpec);
       setResult(res.result);
       setLlmResponse(res.llmResponse);
     } catch (err: any) {

@@ -111,6 +111,17 @@ function modalUrl(env: Env, label: string): string {
   return `${env.MODAL_BASE}--${label}.modal.run`;
 }
 
+/** Return the first input-node id from a backend pipeline JSON string. */
+function firstInputNodeIdFromPipeline(pipelineJson: string): string | null {
+  try {
+    const parsed = JSON.parse(pipelineJson) as { nodes?: Array<{ id?: string; type?: string }> };
+    const inputNode = (parsed.nodes || []).find((n) => typeof n.type === "string" && n.type.endsWith("_input"));
+    return inputNode?.id || null;
+  } catch {
+    return null;
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Static routes — handled entirely by the Worker
 // ═════════════════════════════════════════════════════════════════════════════
@@ -363,22 +374,144 @@ function buildTar(entries: Array<{ name: string; data: Uint8Array }>): Uint8Arra
   return out;
 }
 
-// POST /api/workflow/:id/train — accepts {pipeline, files[<nodeId>]} → forwards to Modal /train
+// POST /api/workflow/:id/train
+//
+// For each node with uploaded files, routes by node type:
+//   text_input  → checks KV for pre-embedded Actian collection, OR chunks+embeds fresh file
+//   image/audio/tabular → checks KV for pre-uploaded R2 key, OR stores fresh file in R2
+//
+// Modal receives:
+//   actian_collections[nodeId] — collection name to scan at train time (text)
+//   r2_keys[nodeId]            — R2 object key to download at train time (binary)
 app.post("/api/workflow/:id/train", async (c) => {
   const workflowId = c.req.param("id");
   const jobId      = crypto.randomUUID();
   const fd         = await c.req.formData();
 
-  fd.set("job_id",      jobId);
-  fd.set("workflow_id", workflowId);
-  fd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
-  fd.set("r2_key_id",   c.env.R2_ACCESS_KEY_ID     || "");
-  fd.set("r2_secret",   c.env.R2_SECRET_ACCESS_KEY || "");
-  fd.set("r2_bucket",   "hackillinois-models");
-  fd.set("actian_url",  c.env.ACTIAN_HTTP_URL       || "");
+  // Debug: log all form keys received from frontend
+  const allKeys: string[] = [];
+  for (const [key, value] of fd.entries()) {
+    const isFile = typeof value !== "string";
+    allKeys.push(`${key}(${isFile ? `file:${(value as File).name || "?"},${(value as File).size || 0}b` : "string"})`);
+  }
+  console.log(`[train] form keys from frontend: [${allKeys.join(", ")}]`);
+
+  const pipelineVal = fd.get("pipeline");
+  if (!pipelineVal || typeof pipelineVal !== "string") {
+    return c.json({ error: "Missing 'pipeline' field." }, 400);
+  }
+
+  // Build node-type map from pipeline spec
+  const nodeTypeMap: Record<string, string> = {};
+  try {
+    const spec = JSON.parse(pipelineVal) as { nodes?: Array<{ id: string; type: string }> };
+    for (const node of spec.nodes || []) nodeTypeMap[node.id] = node.type;
+  } catch (_) {}
+
+  // Assemble fresh FormData for Modal
+  const modalFd = new FormData();
+  modalFd.set("pipeline",    pipelineVal);
+  modalFd.set("job_id",      jobId);
+  modalFd.set("workflow_id", workflowId);
+  modalFd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
+  modalFd.set("r2_key_id",   c.env.R2_ACCESS_KEY_ID     || "");
+  modalFd.set("r2_secret",   c.env.R2_SECRET_ACCESS_KEY || "");
+  modalFd.set("r2_bucket",   "hackillinois-models");
+  modalFd.set("actian_url",  c.env.ACTIAN_HTTP_URL       || "");
+
+  // Forward any scalar fields (e.g. gpu)
+  for (const [key, value] of fd.entries()) {
+    if (key === "pipeline" || (key.startsWith("files[") && key.endsWith("]"))) continue;
+    if (typeof value === "string") modalFd.set(key, value);
+  }
+
+  // Track which nodes we've handled via fresh files (to avoid double-processing KV)
+  const freshNodes = new Set<string>();
+
+  // ── Process fresh file uploads ────────────────────────────────────────────
+  for (const [key, rawValue] of fd.entries()) {
+    if (!key.startsWith("files[") || !key.endsWith("]")) continue;
+    const file = rawValue as unknown as File;
+    if (!(file instanceof File)) continue;
+
+    const nodeId   = key.slice(6, -1);
+    const nodeType = nodeTypeMap[nodeId] || "";
+    const buf      = await file.arrayBuffer();
+    freshNodes.add(nodeId);
+
+    if (nodeType === "text_input") {
+      // Chunk the file, pass raw chunks directly to Modal.
+      // The encoder is fine-tuned on these chunks first; THEN Modal embeds with the
+      // fine-tuned model and stores in Actian. No pre-training embed-store needed.
+      try {
+        const chunkFd = new FormData();
+        chunkFd.set("file", new Blob([buf], { type: file.type || "text/plain" }), file.name);
+        chunkFd.set("method", "auto");
+        chunkFd.set("preview_limit", "100000");
+
+        const chunkResp = await fetch(modalUrl(c.env, "chunk"), {
+          method: "POST", headers: modalHeaders(c.env), body: chunkFd,
+        });
+
+        if (chunkResp.ok) {
+          const chunks = ((await chunkResp.json() as { preview?: string[] }).preview) || [];
+          if (chunks.length > 0) {
+            // Pass raw chunks to Modal — fine-tune first, THEN Actian embedding
+            modalFd.set(`text_chunks[${nodeId}]`, JSON.stringify(chunks));
+            console.log(`[train] text node ${nodeId}: ${chunks.length} chunks → Modal (raw)`);
+          } else {
+            // Chunking returned 0 chunks — send raw file so TextInputNode can read it
+            console.warn(`[train] chunk returned 0 chunks for ${nodeId}, sending raw file`);
+            modalFd.set(`files[${nodeId}]`, new Blob([buf], { type: file.type || "text/plain" }), file.name);
+          }
+        } else {
+          // Fallback: send raw file bytes
+          console.error(`[train] chunk failed (${chunkResp.status}) for ${nodeId}, sending raw`);
+          modalFd.set(`files[${nodeId}]`, new Blob([buf], { type: file.type || "text/plain" }), file.name);
+        }
+      } catch (e) {
+        console.error(`[train] chunk error for ${nodeId}:`, e);
+        modalFd.set(`files[${nodeId}]`, new Blob([buf], { type: file.type || "text/plain" }), file.name);
+      }
+
+    } else {
+      // Binary node: store in R2, pass key to Modal
+      const r2Key = `uploads/${workflowId}/${nodeId}/${file.name}`;
+      await c.env.R2_MODELS.put(r2Key, buf, {
+        httpMetadata: { contentType: file.type || "application/octet-stream" },
+      });
+      modalFd.append(`r2_keys[${nodeId}]`, r2Key);
+      console.log(`[train] binary node ${nodeId}: stored R2 ${r2Key}`);
+    }
+  }
+
+  // ── Check KV for nodes pre-uploaded via /upload endpoint ──────────────────
+  const uploadKeys = await c.env.JOB_KV.list({ prefix: `upload:${workflowId}:` });
+  for (const { name } of uploadKeys.keys) {
+    const nodeId = name.slice(`upload:${workflowId}:`.length);
+    if (freshNodes.has(nodeId)) continue;   // already handled via fresh file
+
+    const entry = (await c.env.JOB_KV.get(name, "json")) as { type: string; collection?: string; keys?: string[]; chunks?: string[] } | null;
+    if (!entry) continue;
+
+    if (entry.type === "text" && entry.chunks?.length) {
+      // Raw chunks from pre-upload — fine-tune first, THEN Actian embed
+      modalFd.set(`text_chunks[${nodeId}]`, JSON.stringify(entry.chunks));
+      console.log(`[train] node ${nodeId}: ${entry.chunks.length} raw chunks from KV`);
+    } else if (entry.type === "actian" && entry.collection) {
+      // Legacy: collection was pre-embedded (old upload path) — scan Actian at train time
+      modalFd.set(`actian_collections[${nodeId}]`, entry.collection);
+      console.log(`[train] node ${nodeId}: Actian collection from KV '${entry.collection}'`);
+    } else if (entry.type === "r2" && entry.keys?.length) {
+      for (const r2Key of entry.keys) {
+        modalFd.append(`r2_keys[${nodeId}]`, r2Key);
+      }
+      console.log(`[train] node ${nodeId}: R2 keys from KV (${entry.keys.length})`);
+    }
+  }
 
   const resp = await fetch(modalUrl(c.env, "train"), {
-    method: "POST", headers: modalHeaders(c.env), body: fd,
+    method: "POST", headers: modalHeaders(c.env), body: modalFd,
   });
   if (!resp.ok) {
     const errText = await resp.text();
@@ -387,7 +520,7 @@ app.post("/api/workflow/:id/train", async (c) => {
   }
   let data: Record<string, unknown> = {};
   try { data = (await resp.json()) as Record<string, unknown>; } catch (_) {}
-  const retId  = (data.job_id as string) || jobId;
+  const retId = (data.job_id as string) || jobId;
 
   await c.env.JOB_KV.put(
     `job:${retId}`,
@@ -397,20 +530,68 @@ app.post("/api/workflow/:id/train", async (c) => {
   return c.json({ job_id: retId, status: "running" }, 202);
 });
 
-// POST /api/workflow/:id/upload — store training files in R2 uploads/<workflowId>/
+// POST /api/workflow/:id/upload — route files by node type:
+//   text_input  → chunk via Modal /chunk → embed via Modal /embed-store → stored in Actian
+//   image/audio/tabular → stored in R2
+// Saves a KV entry (upload:<workflowId>:<nodeId>) so the train endpoint can look it up.
 app.post("/api/workflow/:id/upload", async (c) => {
   const workflowId = c.req.param("id");
   const fd         = await c.req.formData();
-  const stored: Array<{ name: string; key: string }> = [];
+  const nodeId     = (fd.get("node_id")   as string) || "";
+  const nodeType   = (fd.get("node_type") as string) || "";
+  const stored: Array<{ name: string; type: string; collection?: string; key?: string }> = [];
 
-  for (const [, value] of fd.entries()) {
-    if (value instanceof File) {
-      const key  = `uploads/${workflowId}/${value.name}`;
-      const buf  = await value.arrayBuffer();
-      await c.env.R2_MODELS.put(key, buf, { httpMetadata: { contentType: value.type || "application/octet-stream" } });
-      stored.push({ name: value.name, key });
+  for (const [, rawValue] of fd.entries()) {
+    const file = rawValue as unknown as File;
+    if (!(file instanceof File)) continue;
+
+    const buf = await file.arrayBuffer();
+
+    if (nodeType === "text_input") {
+      // Chunk the file via Modal — store raw chunks in KV.
+      // The encoder will fine-tune on these chunks at train time, THEN embed to Actian.
+      const chunkFd = new FormData();
+      chunkFd.set("file", new Blob([buf], { type: file.type || "text/plain" }), file.name);
+      chunkFd.set("method", "auto");
+      chunkFd.set("preview_limit", "100000");
+
+      const chunkResp = await fetch(modalUrl(c.env, "chunk"), {
+        method: "POST", headers: modalHeaders(c.env), body: chunkFd,
+      });
+      if (!chunkResp.ok) {
+        return c.json({ error: `Chunking failed (${chunkResp.status})` }, 502);
+      }
+      const chunkData = await chunkResp.json() as { preview?: string[] };
+      const chunks    = chunkData.preview || [];
+
+      // Save raw chunks in KV — train endpoint passes these directly to Modal
+      await c.env.JOB_KV.put(
+        `upload:${workflowId}:${nodeId}`,
+        JSON.stringify({ type: "text", chunks }),
+        { expirationTtl: 60 * 60 * 24 * 30 },
+      );
+      stored.push({ name: file.name, type: "text", count: chunks.length } as { name: string; type: string; collection?: string; key?: string });
+
+    } else {
+      // Binary node: store raw file in R2
+      const key = `uploads/${workflowId}/${nodeId ? nodeId + "/" : ""}${file.name}`;
+      await c.env.R2_MODELS.put(key, buf, {
+        httpMetadata: { contentType: file.type || "application/octet-stream" },
+      });
+
+      // Save / append R2 key in KV
+      const existing = (await c.env.JOB_KV.get(`upload:${workflowId}:${nodeId}`, "json")) as { keys?: string[] } | null;
+      const keys = existing?.keys || [];
+      keys.push(key);
+      await c.env.JOB_KV.put(
+        `upload:${workflowId}:${nodeId}`,
+        JSON.stringify({ type: "r2", keys }),
+        { expirationTtl: 60 * 60 * 24 * 30 },
+      );
+      stored.push({ name: file.name, type: "r2", key });
     }
   }
+
   return c.json({ files: stored });
 });
 
@@ -493,19 +674,70 @@ app.post("/api/llm/chat", async (c) => {
   return c.json({ content: data.message?.content || "" });
 });
 
+// POST /api/feedback — lightweight sink for UI feedback events
+app.post("/api/feedback", async (c) => {
+  const body = await c.req.json<{
+    messageId?: string;
+    rating?: "up" | "down";
+    feedback?: string;
+  }>();
+  const id = body.messageId || crypto.randomUUID();
+  await c.env.JOB_KV.put(
+    `feedback:${id}:${Date.now()}`,
+    JSON.stringify({
+      messageId: id,
+      rating: body.rating || "up",
+      feedback: body.feedback || "",
+      createdAt: new Date().toISOString(),
+    }),
+    { expirationTtl: 60 * 60 * 24 * 30 }
+  );
+  return c.json({ ok: true });
+});
+
 // POST /api/deploy/:workflowId — persistent inference endpoint for deployment workflows
 app.post("/api/deploy/:workflowId", async (c) => {
   const workflowId = c.req.param("workflowId");
-
-  // Look up workflow from KV
   const wf = (await c.env.JOB_KV.get(`workflow:${workflowId}`, "json")) as Record<string, unknown> | null;
-  if (!wf) return c.json({ error: "Workflow not found" }, 404);
 
-  const deploymentSpec = wf.deploymentSpec as string | undefined;
+  const contentType = c.req.header("Content-Type") || "";
+  let inboundForm: FormData | null = null;
+  let inboundJson: Record<string, unknown> | null = null;
+  let inboundText = "";
 
-  // Build multipart form with uploaded data + pipeline spec
+  if (contentType.includes("multipart/form-data")) {
+    inboundForm = await c.req.formData();
+  } else if (contentType.includes("application/json")) {
+    inboundJson = await c.req.json<Record<string, unknown>>();
+  } else {
+    inboundText = await c.req.text();
+  }
+
+  let pipelineSpec: string | undefined;
+  if (inboundForm) {
+    const inline = inboundForm.get("pipeline") || inboundForm.get("pipeline_spec");
+    if (typeof inline === "string" && inline.trim()) pipelineSpec = inline;
+  }
+  if (!pipelineSpec && inboundJson) {
+    const inline = inboundJson.pipeline || inboundJson.pipeline_spec;
+    if (typeof inline === "string" && inline.trim()) {
+      pipelineSpec = inline;
+    } else if (inline && typeof inline === "object") {
+      pipelineSpec = JSON.stringify(inline);
+    }
+  }
+  if (!pipelineSpec && typeof wf?.deploymentSpec === "string" && wf.deploymentSpec.trim()) {
+    pipelineSpec = wf.deploymentSpec;
+  }
+
+  if (!pipelineSpec) {
+    return c.json({ error: "Missing pipeline spec. Provide 'pipeline' in request body/form." }, 400);
+  }
+
+  const inputNodeId = firstInputNodeIdFromPipeline(pipelineSpec);
+
   const fd = new FormData();
-  if (deploymentSpec) fd.set("pipeline_spec", deploymentSpec);
+  fd.set("pipeline", pipelineSpec);
   fd.set("workflow_id", workflowId);
   fd.set("actian_url", c.env.ACTIAN_HTTP_URL || "");
   fd.set("r2_endpoint", c.env.R2_ENDPOINT_URL      || "");
@@ -513,19 +745,53 @@ app.post("/api/deploy/:workflowId", async (c) => {
   fd.set("r2_secret",   c.env.R2_SECRET_ACCESS_KEY || "");
   fd.set("r2_bucket",   "hackillinois-models");
 
-  // Attach any uploaded files from this request
-  const contentType = c.req.header("Content-Type") || "";
-  if (contentType.includes("multipart/form-data")) {
-    const inFd = await c.req.formData();
-    for (const [key, value] of inFd.entries()) {
-      fd.set(key, value);
+  if (inboundForm) {
+    for (const [key, value] of inboundForm.entries()) {
+      if (key === "pipeline" || key === "pipeline_spec") continue;
+      if (typeof value === "string") {
+        if (key !== "llm_config") fd.set(key, value);
+        continue;
+      }
+      const fileValue = value as unknown as File;
+      const fileName = fileValue.name || "upload.bin";
+
+      if (key.startsWith("files[") && key.endsWith("]")) {
+        fd.append(key, fileValue, fileName);
+        continue;
+      }
+
+      if ((key === "file" || key === "files[]") && inputNodeId) {
+        fd.append(`files[${inputNodeId}]`, fileValue, fileName);
+        continue;
+      }
+
+      fd.append(key, fileValue, fileName);
     }
-  } else if (contentType.includes("application/json")) {
-    const body = await c.req.json();
-    fd.set("input_json", JSON.stringify(body));
-  } else {
-    const text = await c.req.text();
-    if (text) fd.set("input_text", text);
+  }
+
+  // Text/json payload fallback: attach as a synthetic file for text input nodes.
+  const explicitInputText =
+    (inboundForm?.get("input_text") as string | null) ||
+    (typeof inboundJson?.input_text === "string" ? inboundJson.input_text : "");
+
+  if (explicitInputText && inputNodeId) {
+    fd.append(
+      `files[${inputNodeId}]`,
+      new Blob([explicitInputText], { type: "text/plain" }),
+      "input.txt"
+    );
+  } else if (inboundJson && Object.keys(inboundJson).length > 0 && inputNodeId) {
+    fd.append(
+      `files[${inputNodeId}]`,
+      new Blob([JSON.stringify(inboundJson)], { type: "application/json" }),
+      "input.json"
+    );
+  } else if (!inboundForm && inboundText && inputNodeId) {
+    fd.append(
+      `files[${inputNodeId}]`,
+      new Blob([inboundText], { type: "text/plain" }),
+      "input.txt"
+    );
   }
 
   // Call Modal for inference
@@ -537,18 +803,26 @@ app.post("/api/deploy/:workflowId", async (c) => {
   }
   const result = (await inferResp.json()) as Record<string, unknown>;
 
-  // Optional LLM augmentation if the workflow has an llmNode
-  const nodes = (wf.nodes || []) as Array<{ data: { type: string; parameters: Record<string, unknown> } }>;
-  const llmNode = nodes.find((n) => n.data?.type === "llmNode");
+  // Optional LLM augmentation from request (preferred) or workflow KV fallback.
+  let llmParams: Record<string, unknown> | null = null;
+  const llmConfigRaw = inboundForm?.get("llm_config");
+  if (typeof llmConfigRaw === "string" && llmConfigRaw.trim()) {
+    try { llmParams = JSON.parse(llmConfigRaw) as Record<string, unknown>; } catch (_) {}
+  } else if (inboundJson?.llm_config && typeof inboundJson.llm_config === "object") {
+    llmParams = inboundJson.llm_config as Record<string, unknown>;
+  } else {
+    const nodes = ((wf?.nodes as Array<{ data?: { type?: string; parameters?: Record<string, unknown> } }>) || []);
+    const llmNode = nodes.find((n) => n.data?.type === "llmNode");
+    if (llmNode?.data?.parameters) llmParams = llmNode.data.parameters;
+  }
 
-  if (llmNode) {
-    const p = llmNode.data.parameters;
+  if (llmParams) {
     try {
       const llmBody = {
-        provider:     p.provider as string || "openai",
-        model:        p.model as string | undefined,
-        ollamaUrl:    p.ollamaUrl as string | undefined,
-        systemPrompt: p.systemPrompt as string || "Describe the model output.",
+        provider:     llmParams.provider as string || "openai",
+        model:        llmParams.model as string | undefined,
+        ollamaUrl:    llmParams.ollamaUrl as string | undefined,
+        systemPrompt: llmParams.systemPrompt as string || "Describe the model output.",
         messages: [
           { role: "user", content: `Model output: ${JSON.stringify(result.predictions || result)}` }
         ],

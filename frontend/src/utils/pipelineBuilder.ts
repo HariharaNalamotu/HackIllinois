@@ -144,23 +144,23 @@ function translateParams(
 
     // ── Embedding variants ────────────────────────────────────────────────────
     case 'embeddingMiniLM':
-      out['base_model'] = 'all-MiniLM-L6-v2';
+      out['base_model'] = 'sentence-transformers/all-MiniLM-L6-v2';
       if (params.fineTune && params.method) out['method'] = params.method;
       break;
     case 'embeddingMPNet':
-      out['base_model'] = 'all-mpnet-base-v2';
+      out['base_model'] = 'sentence-transformers/all-mpnet-base-v2';
       if (params.fineTune && params.method) out['method'] = params.method;
       break;
     case 'embeddingBGESmall':
-      out['base_model'] = 'bge-small-en-v1.5';
+      out['base_model'] = 'BAAI/bge-small-en-v1.5';
       if (params.fineTune && params.method) out['method'] = params.method;
       break;
     case 'embeddingBGEBase':
-      out['base_model'] = 'bge-base-en-v1.5';
+      out['base_model'] = 'BAAI/bge-base-en-v1.5';
       if (params.fineTune && params.method) out['method'] = params.method;
       break;
     case 'embeddingMultilingual':
-      out['base_model'] = 'paraphrase-multilingual-MiniLM-L12-v2';
+      out['base_model'] = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2';
       if (params.fineTune && params.method) out['method'] = params.method;
       break;
 
