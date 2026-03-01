@@ -267,7 +267,7 @@ export async function runInference(
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Inference failed: ${err.slice(0, 200)}`);
+    throw new Error(`Inference failed: ${err.slice(0, 800)}`);
   }
   return res.json();
 }

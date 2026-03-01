@@ -10,9 +10,9 @@ type WorkflowNodeProps = NodeProps & {
 
 const INPUT_TYPES: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput', 'agenticLLM'];
 
-const OPTIMIZATION_TYPES = new Set([
-  'agentTool', 'rlhf', 'rlaif', 'subAgent', 'chunkingOptimization', 'hyperparamTuning',
-]);
+const AGENTIC_OPTIMIZATION_TYPES = new Set(['agentTool', 'subAgent']);
+const NON_AGENTIC_OPTIMIZATION_TYPES = new Set(['chunkingOptimization', 'hyperparamTuning', 'rlhf', 'rlaif']);
+const OPTIMIZATION_TYPES = new Set([...AGENTIC_OPTIMIZATION_TYPES, ...NON_AGENTIC_OPTIMIZATION_TYPES]);
 
 const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected }) => {
   const setSelectedNode = useWorkflowStore((state) => state.setSelectedNode);
@@ -23,8 +23,10 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
   const color = definition?.color || '#00d4ff';
 
   const isInput = INPUT_TYPES.includes(data.type as InputNodeType);
+  const isAgenticInput = data.type === 'agenticLLM';
   const isOutput = data.type === 'saveModel' || data.type === 'deployOutputNode';
   const isOptimization = OPTIMIZATION_TYPES.has(data.type);
+  const isAgenticOpt = AGENTIC_OPTIMIZATION_TYPES.has(data.type);
   const isProcessing = !isInput && !isOutput;
 
   const handleClick = () => {
@@ -91,84 +93,93 @@ const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({ id, data, selected
         </div>
       )}
 
-      {/* Bottom spacer for nodes with a bottom handle */}
-      {(isInput || (isProcessing && !isOptimization)) && (
-        <div className="h-2" />
-      )}
-
-      {/* Input nodes: source handle on the right only (no left handle) */}
-      {isInput && (
+      {/* Agentic input: right + bottom handles */}
+      {isInput && isAgenticInput && (
         <>
           <Handle
             type="source"
             position={Position.Right}
             id="output"
-            className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
+            className="!w-[8px] !h-[8px] !border-[1.5px] !border-[#1a1a24] !right-[-4px]"
             style={{ backgroundColor: color }}
           />
           <Handle
             type="source"
             position={Position.Bottom}
             id="opt-output"
-            className="!w-[14px] !h-[14px] !border-2 !border-[#1a1a24]"
-            style={{ backgroundColor: '#ffd700', bottom: '-7px' }}
+            className="!w-[8px] !h-[8px] !border-[1.5px] !border-[#1a1a24] !bottom-[-4px]"
+            style={{ backgroundColor: '#ffd700' }}
           />
         </>
       )}
 
-      {/* Optimization nodes: target on top, source on right */}
-      {isProcessing && isOptimization && (
+      {/* Non-agentic input nodes: right handle only */}
+      {isInput && !isAgenticInput && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="output"
+          className="!w-[8px] !h-[8px] !border-[1.5px] !border-[#1a1a24] !right-[-4px]"
+          style={{ backgroundColor: color }}
+        />
+      )}
+
+      {/* Agentic optimization nodes: top handle only */}
+      {isProcessing && isAgenticOpt && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          id="opt-input"
+          className="!w-[8px] !h-[8px] !border-[1.5px] !border-[#1a1a24] !top-[-4px]"
+          style={{ backgroundColor: '#ffd700' }}
+        />
+      )}
+
+      {/* Non-agentic optimization nodes: left + right handles */}
+      {isProcessing && isOptimization && !isAgenticOpt && (
         <>
           <Handle
             type="target"
-            position={Position.Top}
-            id="opt-input"
-            className="!w-[14px] !h-[14px] !border-2 !border-[#1a1a24]"
-            style={{ backgroundColor: '#ffd700', top: '-7px' }}
+            position={Position.Left}
+            id="input"
+            className="!w-[8px] !h-[8px] !bg-[#2a2a38] !border-[1.5px] !border-[#1a1a24] !left-[-4px]"
           />
           <Handle
             type="source"
             position={Position.Right}
             id="output"
-            className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
+            className="!w-[8px] !h-[8px] !border-[1.5px] !border-[#1a1a24] !right-[-4px]"
             style={{ backgroundColor: color }}
           />
         </>
       )}
 
-      {/* Regular processing nodes: target on left, source on right, bottom handle for optimization */}
+      {/* Regular processing nodes: left + right handles */}
       {isProcessing && !isOptimization && (
         <>
           <Handle
             type="target"
             position={Position.Left}
             id="input"
-            className="!w-[18px] !h-[18px] !bg-[#2a2a38] !border-2 !border-[#1a1a24]"
+            className="!w-[8px] !h-[8px] !bg-[#2a2a38] !border-[1.5px] !border-[#1a1a24] !left-[-4px]"
           />
           <Handle
             type="source"
             position={Position.Right}
             id="output"
-            className="!w-[18px] !h-[18px] !border-2 !border-[#1a1a24]"
+            className="!w-[8px] !h-[8px] !border-[1.5px] !border-[#1a1a24] !right-[-4px]"
             style={{ backgroundColor: color }}
-          />
-          <Handle
-            type="source"
-            position={Position.Bottom}
-            id="opt-output"
-            className="!w-[14px] !h-[14px] !border-2 !border-[#1a1a24]"
-            style={{ backgroundColor: '#ffd700', bottom: '-7px' }}
           />
         </>
       )}
 
-      {/* Output nodes: only a target handle on the left (no right handle) */}
+      {/* Output nodes: left handle only */}
       {isOutput && (
         <Handle
           type="target"
           position={Position.Left}
           id="input"
-          className="!w-[18px] !h-[18px] !bg-[#ef4444] !border-2 !border-[#1a1a24]"
+          className="!w-[8px] !h-[8px] !bg-[#ef4444] !border-[1.5px] !border-[#1a1a24] !left-[-4px]"
         />
       )}
     </div>

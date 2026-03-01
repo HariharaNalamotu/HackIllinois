@@ -10,7 +10,7 @@ import {
   SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, Play, Settings, Zap } from 'lucide-react';
+import { ArrowLeft, Play, Settings } from 'lucide-react';
 
 import { NodePalette, WorkflowPaletteMode } from '../components/NodePalette';
 import { PropertiesPanel } from '../components/PropertiesPanel';
@@ -128,11 +128,9 @@ function WorkflowCanvas() {
 function EditorHeader({
   workflowName,
   workflowId,
-  workflowType,
 }: {
   workflowName: string;
   workflowId: string;
-  workflowType: 'training' | 'deployment';
 }) {
   const navigate = useNavigate();
   const nodes = useWorkflowStore((state) => state.nodes);
@@ -215,37 +213,32 @@ function EditorHeader({
             <Settings className="w-5 h-5" />
           </button>
 
-          {workflowType === 'training' && (
-            <button
-              onClick={handleTrainModel}
-              disabled={trainDisabled}
-              title={
-                trainDisabled
-                  ? activeInputNodes.length === 0
-                    ? 'Add an input node to enable training'
-                    : 'Add at least one processing node to enable training'
-                  : 'Run Training Pipeline on GPU'
-              }
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                trainDisabled
-                  ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
-                  : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
-              }`}
-            >
-              <Play className="w-4 h-4" />
-              Run Training
-            </button>
-          )}
+          <button
+            onClick={handleTrainModel}
+            disabled={trainDisabled}
+            title={
+              trainDisabled
+                ? activeInputNodes.length === 0
+                  ? 'Add an input node to enable training'
+                  : 'Add at least one processing node to enable training'
+                : 'Train Model on GPU'
+            }
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              trainDisabled
+                ? 'bg-[#1a1a24] text-gray-600 cursor-not-allowed'
+                : 'bg-[#22c55e] text-[#0a0a0f] hover:bg-[#16a34a]'
+            }`}
+          >
+            Train Model
+          </button>
 
-          {workflowType === 'deployment' && (
-            <button
-              onClick={() => navigate(`/run/${workflowId}`)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-[#6366f1] text-white hover:bg-[#4f46e5] transition-colors"
-            >
-              <Zap className="w-4 h-4" />
-              Test Inference
-            </button>
-          )}
+          <button
+            onClick={() => navigate(`/test/${workflowId}`)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-[#00d4ff] text-[#0a0a0f] hover:bg-[#00b8d4] transition-colors"
+          >
+            <Play className="w-4 h-4" />
+            Execute
+          </button>
         </div>
       </header>
 
@@ -322,7 +315,6 @@ function EditorContent({ workflowId }: { workflowId: string }) {
       <EditorHeader
         workflowName={workflow.name}
         workflowId={workflowId}
-        workflowType={workflow.type}
       />
       <div className="flex-1 flex overflow-hidden">
         <NodePalette mode={workflow.type as WorkflowPaletteMode} />

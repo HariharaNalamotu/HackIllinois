@@ -3,7 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Send, Image, Mic, FileAudio, X, ThumbsUp, ThumbsDown, ChevronDown, ChevronRight, Bot } from 'lucide-react';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { InputNodeType } from '../store/workflowStore';
-import { chatStream, submitFeedback, RLAIFScore, ChatMessage, WorkflowConfig } from '../services/api';
+import { runInference, submitFeedback, RLAIFScore } from '../services/api';
+import { buildInferPipelineFromTraining, buildPipelineSpec } from '../utils/pipelineBuilder';
+import type { Edge } from '@xyflow/react';
 
 interface SubAgentStep {
   agent: string;
@@ -140,8 +142,13 @@ const SubAgentBlock: React.FC<{ steps: SubAgentStep[] }> = ({ steps }) => {
   );
 };
 
-// Chat Interface for Text/Agentic LLM workflows
-const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowConfig }) => {
+// Chat Interface for Text/Embedding workflows — uses trained model via inference endpoint
+const ChatInterface: React.FC<{
+  workflowId: string;
+  nodes: any[];
+  edges: Edge[];
+  trainedModels?: string[];
+}> = ({ workflowId, nodes, edges, trainedModels }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -167,73 +174,70 @@ const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowC
       content: input,
     };
 
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsStreaming(true);
 
     const assistantId = (Date.now() + 1).toString();
-    const assistantMessage: Message = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      toolCalls: [],
-      subAgentSteps: [],
-    };
-    setMessages((prev) => [...prev, assistantMessage]);
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: 'assistant', content: '' },
+    ]);
 
-    const chatMessages: ChatMessage[] = updatedMessages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    try {
+      // Build inference pipeline from trained model or raw workflow
+      const trainedModel = trainedModels?.[trainedModels.length - 1];
+      let pipelineSpec;
 
-    await chatStream(chatMessages, workflowConfig, {
-      onToken: (token) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, content: m.content + token } : m
-          )
+      if (trainedModel) {
+        pipelineSpec = buildInferPipelineFromTraining(nodes, edges, trainedModel);
+      } else {
+        const pipelineNodes = nodes.filter(
+          (n) => n.data.type !== 'llmNode' && n.data.type !== 'saveModel'
         );
-      },
-      onToolCall: (toolCall) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
-              : m
-          )
+        const excludeIds = new Set(
+          nodes.filter((n) => n.data.type === 'llmNode' || n.data.type === 'saveModel').map((n) => n.id)
         );
-      },
-      onSubAgent: (step) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, subAgentSteps: [...(m.subAgentSteps || []), step] }
-              : m
-          )
-        );
-      },
-      onRlaifScore: (score) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, rlaifScore: score } : m
-          )
-        );
-      },
-      onDone: () => {
-        setIsStreaming(false);
-      },
-      onError: (error) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: m.content || `Error: ${error}` }
-              : m
-          )
-        );
-        setIsStreaming(false);
-      },
-    });
+        const pipelineEdges = edges.filter((e) => !excludeIds.has(e.source) && !excludeIds.has(e.target));
+        const spec = buildPipelineSpec(pipelineNodes, pipelineEdges, 'infer');
+
+        if (!spec.nodes.some((n) => n.type === 'infer_output')) {
+          const hasOutgoing = new Set(spec.edges.map((e) => e.from));
+          const lastNode = spec.nodes.filter((n) => !hasOutgoing.has(n.id)).pop()
+            ?? spec.nodes[spec.nodes.length - 1];
+          const inferOutputId = '__infer_output__';
+          spec.nodes.push({ id: inferOutputId, type: 'infer_output', params: {} });
+          if (lastNode) spec.edges.push({ from: lastNode.id, to: inferOutputId });
+        }
+        pipelineSpec = spec;
+      }
+
+      // Extract LLM node config if present
+      const llmNode = nodes.find((n) => n.data.type === 'llmNode');
+      const llmConfig = llmNode ? (llmNode.data.parameters as Record<string, unknown>) : undefined;
+
+      const res = await runInference(workflowId, input, pipelineSpec, llmConfig);
+
+      // Format the result as the assistant response
+      const resultText = res.llmResponse
+        || (typeof res.result === 'string' ? res.result : JSON.stringify(res.result, null, 2));
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, content: resultText } : m
+        )
+      );
+    } catch (err: any) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: `Error: ${err.message || 'Inference failed'}` }
+            : m
+        )
+      );
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   return (
@@ -548,11 +552,8 @@ export const TestPage: React.FC = () => {
     );
   }
 
-  // Build workflow config for API calls
-  const workflowConfig: WorkflowConfig = {
-    nodes: workflow.nodes,
-    edges: workflow.edges,
-  };
+  // For deployment workflows, use source training ID so Actian collection name matches
+  const inferWorkflowId = workflow.sourceTrainingId || id!;
 
   // Determine the primary input type
   const inputTypes: InputNodeType[] = ['textInput', 'imageInput', 'audioInput', 'spreadsheetInput', 'agenticLLM'];
@@ -561,7 +562,14 @@ export const TestPage: React.FC = () => {
     .map((node) => node.data.type as InputNodeType);
 
   // Prioritize interface based on input types
-  let InterfaceComponent: React.FC = () => <ChatInterface workflowConfig={workflowConfig} />;
+  let InterfaceComponent: React.FC = () => (
+    <ChatInterface
+      workflowId={inferWorkflowId}
+      nodes={workflow.nodes}
+      edges={workflow.edges || []}
+      trainedModels={workflow.trainedModels}
+    />
+  );
   let interfaceLabel = 'Chat';
 
   if (workflowInputTypes.includes('imageInput')) {

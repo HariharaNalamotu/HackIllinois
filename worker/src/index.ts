@@ -87,7 +87,18 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("*", async (c, next) => {
   const origins = (c.env.ALLOWED_ORIGINS || "*").split(",").map((s) => s.trim());
   const origin  = c.req.header("Origin") || "";
-  const allowed = origins.includes("*") || origins.includes(origin) ? origin : origins[0];
+
+  const isAllowed = origins.includes("*") || origins.some((o) => {
+    if (o === origin) return true;
+    // Support wildcard subdomains: https://*.example.com matches https://foo.example.com
+    if (o.includes("*.")) {
+      // e.g. "https://*.hackillinois-frontend.pages.dev" → scheme "https://" + suffix ".hackillinois-frontend.pages.dev"
+      const [scheme, rest] = o.split("*");           // ["https://", ".hackillinois-frontend.pages.dev"]
+      return origin.startsWith(scheme) && origin.endsWith(rest);
+    }
+    return false;
+  });
+  const allowed = isAllowed ? origin : origins[0];
 
   if (c.req.method === "OPTIONS") {
     return new Response(null, {
@@ -825,7 +836,8 @@ app.post("/api/deploy/:workflowId", async (c) => {
     method: "POST", headers: modalHeaders(c.env), body: fd,
   });
   if (!inferResp.ok) {
-    return c.json({ error: "Inference failed", status: inferResp.status }, 502);
+    const errBody = await inferResp.text().catch(() => "");
+    return c.json({ error: `Inference failed: ${errBody}`.slice(0, 1000), status: inferResp.status }, 502);
   }
   const result = (await inferResp.json()) as Record<string, unknown>;
 
