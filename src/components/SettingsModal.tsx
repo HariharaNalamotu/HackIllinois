@@ -2,10 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { X, Eye, EyeOff, Check, AlertCircle } from 'lucide-react';
 
 const API_KEY_STORAGE_KEY = 'ml-workflow-openai-api-key';
+const TAVILY_KEY_STORAGE_KEY = 'ml-workflow-tavily-api-key';
 const BACKEND_URL_STORAGE_KEY = 'ml-workflow-backend-url';
 
 export const getStoredApiKey = (): string => {
   return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+};
+
+export const getStoredTavilyKey = (): string => {
+  return localStorage.getItem(TAVILY_KEY_STORAGE_KEY) || '';
 };
 
 export const getStoredBackendUrl = (): string => {
@@ -18,18 +23,22 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [apiKey, setApiKey] = useState('');
+  const [tavilyKey, setTavilyKey] = useState('');
   const [backendUrl, setBackendUrl] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [showTavilyKey, setShowTavilyKey] = useState(false);
   const [status, setStatus] = useState<'idle' | 'checking' | 'connected' | 'error'>('idle');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     setApiKey(getStoredApiKey());
+    setTavilyKey(getStoredTavilyKey());
     setBackendUrl(getStoredBackendUrl());
   }, []);
 
   const handleSave = () => {
     localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+    localStorage.setItem(TAVILY_KEY_STORAGE_KEY, tavilyKey);
     localStorage.setItem(BACKEND_URL_STORAGE_KEY, backendUrl);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -90,6 +99,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </div>
             <p className="text-xs text-gray-600 mt-1">
               Stored locally in your browser. Never sent to our servers.
+            </p>
+          </div>
+
+          {/* Tavily API Key */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Tavily API Key
+            </label>
+            <div className="relative">
+              <input
+                type={showTavilyKey ? 'text' : 'password'}
+                value={tavilyKey}
+                onChange={(e) => setTavilyKey(e.target.value)}
+                placeholder="tvly-..."
+                className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded-lg px-4 py-3 pr-12 text-gray-200 focus:outline-none focus:border-[#00d4ff] font-mono text-sm"
+              />
+              <button
+                onClick={() => setShowTavilyKey(!showTavilyKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+              >
+                {showTavilyKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-gray-600 mt-1">
+              Optional. Enables web search for better tool code generation.
             </p>
           </div>
 

@@ -2,6 +2,12 @@ name = "ml-workflow-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
+# Allow new Function() / eval() for dynamic tool code execution.
+# The unsafe_eval binding exposes eval/newFunction in the Workers runtime.
+[[unsafe.bindings]]
+name = "UNSAFE_EVAL"
+type = "unsafe_eval"
+
 [vars]
 ENVIRONMENT = "development"
 ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000"

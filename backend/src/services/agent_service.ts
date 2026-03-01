@@ -3,8 +3,8 @@
 
 import type { Context } from 'hono';
 import type { AppContext } from '../index';
-import { buildToolDefinitions, executeTool, ToolDefinition } from './tool_service';
-import { getSubAgentConfigs, buildSubAgentTools, executeSubAgent, SubAgentConfig } from './subagent_service';
+import { buildToolDefinitions, executeTool, registerToolApiKeys, ToolDefinition } from './tool_service';
+import { getSubAgentConfigs, buildSubAgentTools, executeSubAgent, resetSubAgentSessions, SubAgentConfig } from './subagent_service';
 import { getRLAIFConfig, evaluateResponse, getGoodResponseExamples } from './rlaif_service';
 import { getPositiveFeedbackContext } from './rlhf_service';
 
@@ -28,6 +28,15 @@ function buildSystemPrompt(nodes: any[]): string {
   const llmNode = nodes.find((n: any) => n.data?.type === 'agenticLLM');
   let basePrompt = llmNode?.data?.parameters?.subAgentPrompt || 'You are a helpful AI assistant.';
 
+  // Add tool usage instructions if tools are present
+  const toolNodes = nodes.filter((n: any) => n.data?.type === 'agentTool' && n.data.parameters?.functionName);
+  if (toolNodes.length > 0) {
+    basePrompt += '\n\nYou have access to tools that can perform real actions. When a user asks you to do something that a tool can handle, ALWAYS call the tool — do not say you cannot do it. Your tools are fully functional and their results are delivered directly to the user.';
+    basePrompt += ' Tools that produce files (PDFs, images, documents, etc.) will automatically deliver the file to the user as a download — you do not need to worry about file delivery, just call the tool.';
+    basePrompt += ' Never tell the user you have "tool limitations" or suggest they use external services for tasks your tools can handle.';
+    basePrompt += ' IMPORTANT: If one tool call fails (e.g. web search returns an error), do NOT give up on the remaining tools. Continue with the other tools using your existing knowledge. For example, if search fails but you have a PDF generation tool, still generate the PDF with whatever information you have.';
+  }
+
   // Add RLHF context (positive feedback examples)
   basePrompt += getPositiveFeedbackContext();
 
@@ -37,16 +46,10 @@ function buildSystemPrompt(nodes: any[]): string {
   return basePrompt;
 }
 
-// Map frontend model names to OpenAI model IDs
+// Resolve the model from the workflow's LLM node
 function resolveModel(nodes: any[]): string {
   const llmNode = nodes.find((n: any) => n.data?.type === 'agenticLLM');
-  const model = llmNode?.data?.parameters?.subAgentModel || 'gpt-5.2';
-  const modelMap: Record<string, string> = {
-    'gpt-5.2': 'gpt-4o',
-    'gpt-5-mini': 'gpt-4o-mini',
-    'gpt-5-nano': 'gpt-4o-mini',
-  };
-  return modelMap[model] || 'gpt-4o-mini';
+  return llmNode?.data?.parameters?.subAgentModel || 'gpt-5.2';
 }
 
 // SSE helper: write a server-sent event
@@ -58,6 +61,10 @@ export async function chatHandler(c: Context<AppContext>) {
   const apiKey = c.req.header('X-API-Key');
   if (!apiKey) {
     return c.json({ error: 'X-API-Key header is required. Set your OpenAI API key in Settings.' }, 401);
+  }
+
+  if (!apiKey.startsWith('sk-')) {
+    return c.json({ error: 'Invalid API key format. OpenAI keys start with "sk-".' }, 401);
   }
 
   let body: ChatRequest;
@@ -72,17 +79,42 @@ export async function chatHandler(c: Context<AppContext>) {
     return c.json({ error: 'messages array is required' }, 400);
   }
 
-  const nodes = workflowConfig?.nodes || [];
+  if (!workflowConfig?.nodes || !Array.isArray(workflowConfig.nodes)) {
+    return c.json({ error: 'workflowConfig with nodes array is required' }, 400);
+  }
+
+  const nodes = workflowConfig.nodes;
 
   // Build system prompt
   const systemPrompt = buildSystemPrompt(nodes);
   const model = resolveModel(nodes);
 
+  const edges = workflowConfig?.edges || [];
+
+  // Register per-tool API keys from node config
+  registerToolApiKeys(nodes);
+
   // Build tools from agentTool nodes + sub-agent nodes
   const toolDefs = buildToolDefinitions(nodes);
-  const subAgentConfigs = getSubAgentConfigs(nodes);
+  const subAgentConfigs = getSubAgentConfigs(nodes, edges);
   const subAgentTools = buildSubAgentTools(subAgentConfigs);
-  const allTools: ToolDefinition[] = [...toolDefs, ...subAgentTools];
+  // Only give the main agent tools that aren't exclusively connected to a sub-agent
+  const subAgentToolNodeIds = new Set(
+    edges
+      .filter((e: any) => {
+        const targetNode = nodes.find((n: any) => n.id === e.target);
+        const sourceNode = nodes.find((n: any) => n.id === e.source);
+        return targetNode?.data?.type === 'subAgent' || sourceNode?.data?.type === 'subAgent';
+      })
+      .flatMap((e: any) => [e.source, e.target])
+      .filter((id: string) => nodes.find((n: any) => n.id === id)?.data?.type === 'agentTool')
+  );
+  const mainAgentTools = toolDefs.filter(
+    (td) => !subAgentToolNodeIds.has(
+      nodes.find((n: any) => n.data?.type === 'agentTool' && n.data.parameters.functionName === td.function.name)?.id
+    )
+  );
+  const allTools: ToolDefinition[] = [...mainAgentTools, ...subAgentTools];
 
   // Build message list with system prompt
   const openaiMessages: any[] = [
@@ -141,14 +173,22 @@ export async function chatHandler(c: Context<AppContext>) {
     }
   };
 
-  // Kick off processing without awaiting (streams to response)
-  processChat();
+  // Kick off processing — use waitUntil so Cloudflare Workers doesn't kill
+  // the promise before it finishes writing to the stream.
+  const promise = processChat();
+  try {
+    c.executionCtx.waitUntil(promise);
+  } catch {
+    // Fallback: if executionCtx isn't available (e.g. local dev), the
+    // TransformStream backpressure will keep the promise alive anyway.
+  }
 
   return new Response(readable, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
       'Access-Control-Allow-Origin': '*',
     },
   });
@@ -192,6 +232,15 @@ async function streamOpenAIResponse(
 
   if (!response.ok) {
     const errText = await response.text();
+    if (response.status === 401) {
+      throw new Error('Invalid OpenAI API key. Please check your key in Settings.');
+    }
+    if (response.status === 429) {
+      throw new Error('OpenAI rate limit exceeded. Please wait a moment and try again.');
+    }
+    if (response.status === 402) {
+      throw new Error('OpenAI billing issue. Check your account has sufficient credits.');
+    }
     throw new Error(`OpenAI API error ${response.status}: ${errText}`);
   }
 
@@ -273,10 +322,18 @@ async function streamOpenAIResponse(
       let result: string;
 
       if (subAgent) {
-        await write(sseEvent('subagent_step', { agent: tc.name, content: `Delegating: "${args.task}"` }));
+        const subMessage = (args.message || args.task || '') as string;
+        await write(sseEvent('subagent_step', { agent: tc.name, content: `Parent → Sub-agent: "${subMessage.slice(0, 100)}${subMessage.length > 100 ? '...' : ''}"` }));
         try {
-          result = await executeSubAgent(subAgent, args.task as string, apiKey);
-          await write(sseEvent('subagent_step', { agent: tc.name, content: `Response: ${result.slice(0, 200)}...` }));
+          result = await executeSubAgent(
+            subAgent,
+            subMessage,
+            apiKey,
+            async (stepContent) => {
+              await write(sseEvent('subagent_step', { agent: tc.name, content: stepContent }));
+            }
+          );
+          await write(sseEvent('subagent_step', { agent: tc.name, content: `Sub-agent → Parent: "${result.slice(0, 200)}${result.length > 200 ? '...' : ''}"` }));
         } catch (err: any) {
           result = `Sub-agent error: ${err.message}`;
           await write(sseEvent('subagent_step', { agent: tc.name, content: result }));
@@ -284,14 +341,58 @@ async function streamOpenAIResponse(
       } else {
         // Regular tool call
         await write(sseEvent('tool_call', { name: tc.name, arguments: tc.arguments }));
-        result = executeTool(tc.name, args);
+        result = await executeTool(tc.name, args);
+      }
+
+      // Check for file outputs in tool result and emit file_output events
+      let cleanResult = result;
+      try {
+        const parsed = JSON.parse(result);
+        // Log tool results for debugging
+        if (parsed?.error) {
+          console.log(`[tool-error] ${tc.name}: ${parsed.error}`);
+        }
+        if (parsed && typeof parsed === 'object') {
+          // Primary: explicit __files__ array
+          if (Array.isArray(parsed.__files__)) {
+            for (const file of parsed.__files__) {
+              await write(sseEvent('file_output', {
+                file: {
+                  filename: file.filename || 'untitled',
+                  mimeType: file.mimeType || 'application/octet-stream',
+                  data: file.data || '',
+                  displayType: file.displayType || (file.mimeType?.startsWith('image/') ? 'image' : 'download'),
+                },
+              }));
+            }
+            const { __files__, ...rest } = parsed;
+            cleanResult = JSON.stringify(rest);
+          }
+          // Fallback: detect single file-like result (has data + mimeType or filename)
+          else if (parsed.data && typeof parsed.data === 'string' && (parsed.mimeType || parsed.filename)) {
+            const mimeType = parsed.mimeType || 'application/octet-stream';
+            await write(sseEvent('file_output', {
+              file: {
+                filename: parsed.filename || `output.${mimeType.split('/')[1] || 'bin'}`,
+                mimeType,
+                data: parsed.data,
+                displayType: parsed.displayType || (mimeType.startsWith('image/') ? 'image' : 'download'),
+              },
+            }));
+            // Pass a summary to the model instead of the raw data
+            const { data: _fileData, ...rest } = parsed;
+            cleanResult = JSON.stringify({ ...rest, fileDelivered: true });
+          }
+        }
+      } catch {
+        // Result is not JSON — use as-is
       }
 
       // Add tool result to conversation
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
-        content: result,
+        content: cleanResult,
       });
     }
 

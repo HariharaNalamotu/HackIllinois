@@ -1,5 +1,6 @@
-import React, { useRef } from 'react';
-import { Settings, Trash2, Upload, Plus, X, FolderOpen, File } from 'lucide-react';
+import React, { useRef, useMemo, useState } from 'react';
+import { Settings, Trash2, Upload, Plus, X, FolderOpen, File, AlertTriangle, Eye, EyeOff, Key } from 'lucide-react';
+import { getStoredTavilyKey } from './SettingsModal';
 import { useWorkflowStore, NodeType, ToolParameter } from '../store/workflowStore';
 import { nodeDefinitions, modelOptions, chunkingStrategyOptions, evalStrategyOptions, parameterTypeOptions, voiceTaskOptions } from '../types/nodes';
 import { v4 as uuidv4 } from 'uuid';
@@ -590,12 +591,19 @@ const VoiceInputForm: React.FC = () => {
   );
 };
 
+const WEB_SEARCH_KEYWORDS = /\b(api|fetch|search|web|http|request|endpoint|url|scrape|crawl|query|lookup|retrieve|get data|external)\b/i;
+
 const AgentToolForm: React.FC = () => {
   const selectedNode = useWorkflowStore((state) => state.selectedNode);
   const updateNodeParameters = useWorkflowStore((state) => state.updateNodeParameters);
 
   if (!selectedNode) return null;
   const params = selectedNode.data.parameters;
+
+  const showTavilyWarning = useMemo(() => {
+    if (!params.functionDescription) return false;
+    return WEB_SEARCH_KEYWORDS.test(params.functionDescription) && !getStoredTavilyKey();
+  }, [params.functionDescription]);
 
   return (
     <div className="space-y-4">
@@ -612,10 +620,52 @@ const AgentToolForm: React.FC = () => {
         placeholder="Describe what this function does and when to use it..."
         multiline
       />
+      {showTavilyWarning && (
+        <div className="flex items-start gap-2 p-2.5 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+          <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-yellow-400">
+            This tool may need external APIs. Add a Tavily API key in Settings for better code generation with web search.
+          </p>
+        </div>
+      )}
       <ToolParameterEditor
         parameters={params.parameters || []}
         onChange={(p) => updateNodeParameters(selectedNode.id, { parameters: p })}
       />
+      <ApiKeyField
+        value={params.apiKey || ''}
+        onChange={(v) => updateNodeParameters(selectedNode.id, { apiKey: v })}
+      />
+    </div>
+  );
+};
+
+const ApiKeyField: React.FC<{ value: string; onChange: (v: string) => void }> = ({ value, onChange }) => {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+        <Key className="w-3 h-3" />
+        API Key (optional)
+      </label>
+      <div className="relative">
+        <input
+          type={show ? 'text' : 'password'}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Key for this tool's external API..."
+          className="w-full bg-[#1a1a24] border border-[#2a2a38] rounded-md px-3 py-2 pr-10 text-sm text-gray-200 focus:outline-none focus:border-[#00d4ff] transition-colors font-mono"
+        />
+        <button
+          onClick={() => setShow(!show)}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+        >
+          {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      <p className="text-[10px] text-gray-600">
+        Injected as <code className="text-gray-500">args.__apiKey</code> at runtime.
+      </p>
     </div>
   );
 };

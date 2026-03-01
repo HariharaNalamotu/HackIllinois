@@ -106,6 +106,7 @@ const getDefaultParameters = (type: NodeType): Record<string, any> => {
         functionName: '',
         functionDescription: '',
         parameters: [] as ToolParameter[],
+        apiKey: '',
       };
     case 'rlhf':
       return {
@@ -187,7 +188,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   selectedNode: null,
 
   setNodes: (nodes) => {
-    set({ nodes, selectedNode: null });
+    const current = get().selectedNode;
+    const stillExists = current ? nodes.find((n) => n.id === current.id) || null : null;
+    set({ nodes, selectedNode: stillExists });
   },
 
   setEdges: (edges) => {
@@ -272,9 +275,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       }
       return true;
     });
-    set((state) => ({
-      nodes: applyNodeChanges(filteredChanges, state.nodes) as WorkflowNode[],
-    }));
+    const updatedNodes = applyNodeChanges(filteredChanges, state.nodes) as WorkflowNode[];
+
+    // Sync selectedNode with ReactFlow's selection state
+    let newSelectedNode = state.selectedNode;
+    const selectionChanges = changes.filter((c) => c.type === 'select');
+    if (selectionChanges.length > 0) {
+      const newlySelected = selectionChanges.find(
+        (c) => c.type === 'select' && c.selected
+      );
+      if (newlySelected) {
+        newSelectedNode = updatedNodes.find((n) => n.id === newlySelected.id) || null;
+      } else {
+        // All selection changes were deselects
+        newSelectedNode = null;
+      }
+    }
+
+    set({ nodes: updatedNodes, selectedNode: newSelectedNode });
   },
 
   onEdgesChange: (changes) => {

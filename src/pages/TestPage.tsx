@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, Image, Mic, FileAudio, X, ThumbsUp, ThumbsDown, ChevronDown, ChevronRight, Bot } from 'lucide-react';
+import { ArrowLeft, Send, Image, Mic, FileAudio, X, ThumbsUp, ThumbsDown, ChevronDown, ChevronRight, Bot, Download, FileIcon, ImageIcon } from 'lucide-react';
 import { useWorkflowsStore } from '../store/workflowsStore';
 import { InputNodeType } from '../store/workflowStore';
-import { chatStream, submitFeedback, RLAIFScore, ChatMessage, WorkflowConfig } from '../services/api';
+import { chatStream, submitFeedback, RLAIFScore, ChatMessage, WorkflowConfig, FileOutput } from '../services/api';
 
 interface SubAgentStep {
   agent: string;
@@ -23,6 +23,7 @@ interface Message {
   feedbackGiven?: 'up' | 'down';
   toolCalls?: ToolCallInfo[];
   subAgentSteps?: SubAgentStep[];
+  fileOutputs?: FileOutput[];
 }
 
 // Quality badge color based on RLAIF overall score
@@ -42,8 +43,9 @@ const getQualityLabel = (score: number): string => {
 const FeedbackButtons: React.FC<{
   messageId: string;
   feedbackGiven?: 'up' | 'down';
+  conversationSnippet?: string;
   onFeedback: (messageId: string, rating: 'up' | 'down') => void;
-}> = ({ messageId, feedbackGiven, onFeedback }) => {
+}> = ({ messageId, feedbackGiven, conversationSnippet, onFeedback }) => {
   const [showTextInput, setShowTextInput] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
 
@@ -56,7 +58,7 @@ const FeedbackButtons: React.FC<{
 
   const handleSubmitText = () => {
     if (feedbackText.trim()) {
-      submitFeedback({ messageId, rating: feedbackGiven || 'down', feedback: feedbackText });
+      submitFeedback({ messageId, rating: feedbackGiven || 'down', feedback: feedbackText, conversationSnippet });
       setShowTextInput(false);
       setFeedbackText('');
     }
@@ -140,22 +142,124 @@ const SubAgentBlock: React.FC<{ steps: SubAgentStep[] }> = ({ steps }) => {
   );
 };
 
+// Download helper: creates a blob from base64 data and triggers browser download
+function downloadFile(file: FileOutput) {
+  const isBase64 = !file.data.includes(' ') && file.data.length > 100;
+  let blob: Blob;
+  if (isBase64) {
+    const byteChars = atob(file.data);
+    const byteArray = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      byteArray[i] = byteChars.charCodeAt(i);
+    }
+    blob = new Blob([byteArray], { type: file.mimeType });
+  } else {
+    blob = new Blob([file.data], { type: file.mimeType });
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function formatFileSize(data: string): string {
+  const bytes = Math.ceil(data.length * 0.75); // approximate base64 decoded size
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// File output display component
+const FileOutputBlock: React.FC<{ files: FileOutput[] }> = ({ files }) => {
+  if (files.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-2">
+      {files.map((file, i) => {
+        if (file.displayType === 'image' || file.mimeType.startsWith('image/')) {
+          const src = file.data.startsWith('data:')
+            ? file.data
+            : `data:${file.mimeType};base64,${file.data}`;
+          return (
+            <div key={i} className="relative group inline-block">
+              <img
+                src={src}
+                alt={file.filename}
+                className="max-w-full max-h-80 rounded-lg border border-[#2a2a38]"
+              />
+              <button
+                onClick={() => downloadFile(file)}
+                className="absolute top-2 right-2 p-1.5 bg-[#0a0a0f]/80 rounded-lg text-gray-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                title={`Download ${file.filename}`}
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <div className="text-xs text-gray-500 mt-1">{file.filename}</div>
+            </div>
+          );
+        }
+
+        // Download card for non-image files
+        return (
+          <div
+            key={i}
+            className="flex items-center gap-3 p-3 bg-[#0a0a0f] border border-[#2a2a38] rounded-lg max-w-xs"
+          >
+            <div className="p-2 bg-[#1a1a24] rounded-lg">
+              <FileIcon className="w-5 h-5 text-[#00d4ff]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm text-gray-200 truncate">{file.filename}</div>
+              <div className="text-xs text-gray-500">
+                {file.mimeType.split('/')[1]?.toUpperCase() || 'FILE'} &middot; {formatFileSize(file.data)}
+              </div>
+            </div>
+            <button
+              onClick={() => downloadFile(file)}
+              className="p-2 text-gray-400 hover:text-[#00d4ff] transition-colors"
+              title={`Download ${file.filename}`}
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // Chat Interface for Text/Agentic LLM workflows
 const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowConfig }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleFeedback = (messageId: string, rating: 'up' | 'down') => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, feedbackGiven: rating } : m))
-    );
-    submitFeedback({ messageId, rating });
+    setMessages((prev) => {
+      // Find the assistant message and the user message before it
+      const msgIndex = prev.findIndex((m) => m.id === messageId);
+      const assistantMsg = prev[msgIndex];
+      const userMsg = prev.slice(0, msgIndex).reverse().find((m) => m.role === 'user');
+
+      const conversationSnippet = userMsg
+        ? `User: ${userMsg.content}\nAssistant: ${assistantMsg?.content || ''}`
+        : assistantMsg?.content || '';
+
+      submitFeedback({ messageId, rating, conversationSnippet });
+
+      return prev.map((m) => (m.id === messageId ? { ...m, feedbackGiven: rating } : m));
+    });
   };
 
   const handleSend = async () => {
@@ -167,8 +271,6 @@ const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowC
       content: input,
     };
 
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
     setInput('');
     setIsStreaming(true);
 
@@ -179,13 +281,19 @@ const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowC
       content: '',
       toolCalls: [],
       subAgentSteps: [],
+      fileOutputs: [],
     };
-    setMessages((prev) => [...prev, assistantMessage]);
 
-    const chatMessages: ChatMessage[] = updatedMessages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    // Use ref to get the latest messages (avoids stale closure)
+    const currentMessages = [...messagesRef.current, userMessage];
+    setMessages([...currentMessages, assistantMessage]);
+
+    const chatMessages: ChatMessage[] = currentMessages
+      .filter((m) => m.content.trim() !== '')
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
 
     await chatStream(chatMessages, workflowConfig, {
       onToken: (token) => {
@@ -209,6 +317,15 @@ const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowC
           prev.map((m) =>
             m.id === assistantId
               ? { ...m, subAgentSteps: [...(m.subAgentSteps || []), step] }
+              : m
+          )
+        );
+      },
+      onFileOutput: (file) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, fileOutputs: [...(m.fileOutputs || []), file] }
               : m
           )
         );
@@ -291,6 +408,11 @@ const ChatInterface: React.FC<{ workflowConfig: WorkflowConfig }> = ({ workflowC
                 {/* Sub-agent steps */}
                 {msg.subAgentSteps && msg.subAgentSteps.length > 0 && (
                   <SubAgentBlock steps={msg.subAgentSteps} />
+                )}
+
+                {/* File outputs */}
+                {msg.fileOutputs && msg.fileOutputs.length > 0 && (
+                  <FileOutputBlock files={msg.fileOutputs} />
                 )}
 
                 {/* RLHF Feedback */}

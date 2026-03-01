@@ -85,12 +85,74 @@ export function buildToolDefinitions(nodes: any[]): ToolDefinition[] {
     });
 }
 
-// Execute a tool call (returns mock results for demo)
-export function executeTool(name: string, args: Record<string, unknown>): string {
-  return JSON.stringify({
-    tool: name,
-    arguments: args,
-    result: `[Mock result for ${name}] — executed successfully with provided arguments.`,
-    timestamp: new Date().toISOString(),
-  });
+// In-memory store of per-tool API keys (keyed by function name)
+const toolApiKeys: Map<string, string> = new Map();
+
+export function setToolApiKey(toolName: string, apiKey: string) {
+  if (apiKey) {
+    toolApiKeys.set(toolName, apiKey);
+  }
+}
+
+// Extract API keys from workflow nodes for runtime injection
+export function registerToolApiKeys(nodes: any[]) {
+  const toolNodes = nodes.filter((n: any) => n.data?.type === 'agentTool' && n.data.parameters?.functionName);
+  for (const node of toolNodes) {
+    const { functionName, apiKey } = node.data.parameters;
+    if (functionName && apiKey) {
+      toolApiKeys.set(functionName, apiKey);
+    }
+  }
+}
+
+// Strip TypeScript syntax from generated code so it runs as plain JS
+function stripTypeScript(code: string): string {
+  return code
+    .replace(/^export\s+(default\s+)?/gm, '')
+    .replace(/^module\.exports\s*=.*/gm, '')
+    .replace(/\((\w+)\s*:\s*\{[^}]*\}\s*\)/g, '($1)')
+    .replace(/(\w+)\s*:\s*(string|number|boolean|any|void|object|unknown|never)\s*(?=[,)=])/g, '$1')
+    .replace(/\)\s*:\s*Promise<[^>]*>\s*\{/g, ') {')
+    .replace(/\)\s*:\s*\w[\w<>,\s|[\]{}]*\s*\{/g, ') {')
+    .replace(/^(interface|type)\s+\w+[\s\S]*?^}/gm, '')
+    .replace(/\s+as\s+\w+(\[\])?/g, '')
+    .replace(/(const|let|var)\s+(\w+)\s*:\s*[^=]+=\s*/g, '$1 $2 = ');
+}
+
+// Execute a tool call — runs codex-generated code via new Function()
+// Requires Node.js runtime (not Cloudflare Workers which blocks eval)
+export async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const { getGeneratedCode } = await import('./codegen_service');
+  const code = getGeneratedCode(name);
+
+  if (!code) {
+    return JSON.stringify({
+      error: `No implementation for tool "${name}". Click "Train Model" first to generate code.`,
+    });
+  }
+
+  // Inject the per-tool API key if one is configured
+  const apiKey = toolApiKeys.get(name);
+  if (apiKey) {
+    args.__apiKey = apiKey;
+  }
+
+  const cleanCode = stripTypeScript(code);
+
+  try {
+    const fn = new Function('args', `
+      return (async () => {
+        ${cleanCode}
+        return typeof ${name} === 'function' ? ${name}(args) : { error: 'Function not found in generated code' };
+      })();
+    `);
+    const result = await fn(args);
+    return JSON.stringify(result);
+  } catch (err: any) {
+    return JSON.stringify({
+      tool: name,
+      error: `Execution failed: ${err.message}`,
+      codePreview: cleanCode.slice(0, 300),
+    });
+  }
 }

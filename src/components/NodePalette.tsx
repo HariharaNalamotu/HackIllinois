@@ -112,14 +112,23 @@ const getInputNodeLabel = (type: InputNodeType): string => {
 
 export const NodePalette: React.FC = () => {
   const getInputNodeTypes = useWorkflowStore((state) => state.getInputNodeTypes);
+  const hasNodeOfType = useWorkflowStore((state) => state.hasNodeOfType);
   const activeInputNodes = getInputNodeTypes();
 
   const inputNodes = nodeDefinitions.filter((n) => n.category === 'input');
   const optimizationNodes = nodeDefinitions.filter((n) => n.category === 'optimization');
   // Output node is auto-added, not available in palette
 
+  // RLHF and RLAIF are mutually exclusive
+  const hasRLHF = hasNodeOfType('rlhf');
+  const hasRLAIF = hasNodeOfType('rlaif');
+
   // Check if an optimization node is enabled based on active input nodes
   const isOptimizationEnabled = (node: NodeDefinition): boolean => {
+    // Mutual exclusion: RLHF blocks RLAIF and vice versa
+    if (node.type === 'rlhf' && hasRLAIF) return false;
+    if (node.type === 'rlaif' && hasRLHF) return false;
+
     if (node.requiresAnyInputNode) {
       return node.requiresAnyInputNode.some((t) => activeInputNodes.includes(t));
     }
@@ -128,6 +137,9 @@ export const NodePalette: React.FC = () => {
   };
 
   const getDisabledReason = (node: NodeDefinition): string => {
+    if (node.type === 'rlhf' && hasRLAIF) return 'RLHF and RLAIF cannot be used together';
+    if (node.type === 'rlaif' && hasRLHF) return 'RLHF and RLAIF cannot be used together';
+
     if (node.requiresAnyInputNode) {
       const labels = node.requiresAnyInputNode.map(getInputNodeLabel).join(' or ');
       return `Add a ${labels} node to enable this`;

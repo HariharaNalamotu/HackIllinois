@@ -14,6 +14,7 @@ export interface FeedbackPayload {
   messageId: string;
   rating: 'up' | 'down';
   feedback?: string;
+  conversationSnippet?: string;
 }
 
 export interface RLAIFScore {
@@ -23,11 +24,19 @@ export interface RLAIFScore {
   overall: number;
 }
 
+export interface FileOutput {
+  filename: string;
+  mimeType: string;       // e.g. 'image/png', 'text/csv', 'application/json'
+  data: string;           // base64-encoded data or text content
+  displayType: 'image' | 'chart' | 'download'; // how to render
+}
+
 export interface StreamCallbacks {
   onToken: (token: string) => void;
   onToolCall?: (toolCall: { name: string; arguments: string }) => void;
   onSubAgent?: (step: { agent: string; content: string }) => void;
   onRlaifScore?: (score: RLAIFScore) => void;
+  onFileOutput?: (file: FileOutput) => void;
   onDone: () => void;
   onError: (error: string) => void;
 }
@@ -103,6 +112,9 @@ export async function chatStream(
               break;
             case 'rlaif_score':
               callbacks.onRlaifScore?.(parsed.score);
+              break;
+            case 'file_output':
+              callbacks.onFileOutput?.(parsed.file);
               break;
             case 'error':
               callbacks.onError(parsed.content);
